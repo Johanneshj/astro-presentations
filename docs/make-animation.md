@@ -54,7 +54,11 @@ The `--options` names are the plugin's own:
 ## How the loops close
 
 The objects run on a virtual clock in a headless browser, so every frame is exact.
-- **Things that repeat:** pulsation, spin, the rays and the interior arrows. Their speeds are
-  nudged so they fit a whole number of times into the loop.
+- **Things that repeat:** pulsation, spin and the interior arrows. Their speeds are nudged so
+  they fit a whole number of times into the loop.
+- **The rays:** a ray only comes back to its start after a whole number of bounces that add up to
+  whole turns round the star. Each ray's frequency (by a few percent) and pace are nudged so that
+  happens exactly within the loop. The rays never turn as a whole. If they can't fit, the loop is
+  made longer (an ℓ = 1 ray needs about 10 s).
 - **Things that never repeat:** a star's boiling surface, its corona and its disk. These are
   crossfaded over the last quarter of the loop.

@@ -15,9 +15,11 @@ Objects (--kind):
     star-rays        a star cut open, with acoustic rays travelling inside
 
 The objects are drawn by the deck's own plugins (plugins/*.js) in a headless browser on a virtual
-clock, so each frame is exact. Everything that repeats (pulsation, spin, rays, arrows) is tuned to
-fit a whole number of times into the loop; what never repeats (boiling surfaces, the corona) is
-crossfaded across the seam. So the animation loops without a jump.
+clock, so each frame is exact. Everything that repeats (pulsation, spin, arrows) is tuned to fit a
+whole number of times into the loop. Each ray gets a whole number of bounces that add up to whole
+turns (its frequency and pace nudged a little; the loop is made longer if needed). What never
+repeats (boiling surfaces, the corona) is crossfaded across the seam. So the animation loops
+without a jump.
 
 Setup, once (in the repository folder):
     python3 -m venv .venv
@@ -87,12 +89,31 @@ def whole(x):
     return max(1, round(x))
 
 
-def plan_loop(kind, opts, seconds):
-    """Returns (options, loop seconds, crossfade fraction, warm-up seconds)."""
+def ray_setup(kind, o):
+    """The rays an object draws: (degrees l, frequencies, omega, speed), or None."""
+    if kind == 'rays':
+        return o.get('modes', [2]), o.get('frequencies', [1]), o.get('omega', 25), o.get('speed', 1)
+    if kind == 'harmonic-rays':
+        return o.get('rays') or [o.get('l', 2)], o.get('rayFrequencies', [1]), o.get('rayOmega', 25), o.get('raySpeed', 1)
+    if kind == 'star-rays':
+        return o.get('rays', [2, 20]), o.get('rayFrequencies', [1]), o.get('rayOmega', 25), o.get('raySpeed', 1)
+    return None
+
+
+def plan_loop(kind, opts, seconds, rays_fit=None):
+    """Returns (options, loop seconds, crossfade fraction, warm-up seconds).
+    rays_fit(loop) -> True if every ray can repeat after that time without turning; the loop is
+    then made longer, step by step, until they all can."""
     o = dict(opts)
+    def longer(candidates):
+        for T in candidates:
+            if rays_fit is None or rays_fit(T):
+                return T
+        sys.exit('The rays do not fit any loop up to 30 s; try other degrees l or --seconds')
     if kind in ('harmonic', 'harmonic-rays'):
         rate = o.get('pulseRate', 0.5)
-        T = whole(seconds * rate) / rate                     # a whole number of pulsations
+        n0 = whole(seconds * rate)                           # a whole number of pulsations
+        T = longer([n / rate for n in range(n0, n0 + 1 + int(30 * rate))]) if kind == 'harmonic-rays' else n0 / rate
         spin = o.get('spinRate', 0.3)
         m, grid = abs(int(o.get('m', 1))), o.get('grid', False)
         # the smallest turn after which the picture looks the same
@@ -106,11 +127,13 @@ def plan_loop(kind, opts, seconds):
         if kind == 'harmonic-rays':
             o.update(cut=True, cutOpen=True, rayLoop=T)
         return o, T, 0.0, (T if kind == 'harmonic-rays' else 0.0)
+    steps = [seconds + 0.5 * k for k in range(int(2 * (30 - seconds)) + 1)]
     if kind == 'rays':
-        o['loop'] = seconds
-        return o, seconds, 0.0, seconds
+        T = longer(steps)
+        o['loop'] = T
+        return o, T, 0.0, T
     # stars
-    T = seconds
+    T = longer(steps) if kind == 'star-rays' else seconds
     period = o.get('rotationPeriod', 20)
     if period:
         o['rotationPeriod'] = math.copysign(T / whole(T / abs(period)), period)
@@ -166,7 +189,9 @@ class Renderer:
 
     def frames(self, kind, opts, size, fps, seconds, progress=True):
         """RGBA frames (numpy, straight alpha) of one seamless loop."""
-        o, T, fade, warm = plan_loop(kind, opts, seconds)
+        rays = ray_setup(kind, opts)
+        fits = (lambda T: self.page.evaluate('([m, f, w, s, T]) => rayLoopFits(m, f, w, s, T)', [*rays, T])) if rays else None
+        o, T, fade, warm = plan_loop(kind, opts, seconds, fits)
         n = max(2, round(T * fps))
         step = 1000 * T / n                                      # exact: n frames span the loop
         nfade = round(n * fade)

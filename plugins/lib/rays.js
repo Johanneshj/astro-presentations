@@ -110,6 +110,41 @@ export function traceRay(l, { omega = 25, bounces = null } = {}) {
 const UNITS_PER_SECOND = 4;                   // ray time units per second, at speed 1
 export const RAY_COLORS = ['#e0115f', '#1e6fe0', '#13a04a', '#f08a00', '#8e2bd6', '#00a5b5'];
 
+// ---------- Loops (for animations that repeat seamlessly) ----------
+
+// A ray's picture repeats once it has made a whole number of skips that add up to a whole number of
+// turns. Its natural skip angle almost never divides a turn, so fitLoop nudges two things, never
+// turning the ray itself: its frequency (a few percent, which changes the skip angle) so that a skips
+// make exactly b turns, and its pace, so that the a skips take exactly `loop` seconds.
+const FIT = { freq: [0.8, 1.25], pace: [0.7, 1.8] };    // how far each may be nudged
+
+/** { skip, rate } for a ray of degree l whose picture repeats after `loop` seconds, or null if no
+ *  nudge within FIT does it (then try another loop length). unitsPerSecond: its natural pace. */
+export function fitLoop(l, omega, unitsPerSecond, loop) {
+  const angle = f => traceSkip(l, { omega: omega * f }).skipAngle;
+  const [fLo, fHi] = FIT.freq, aLo = angle(fLo), aHi = angle(fHi);
+  const natural = traceSkip(l, { omega });
+  const skipsNatural = loop * unitsPerSecond / natural.skipTime;
+  let best = null;
+  for (let a = Math.max(1, Math.ceil(skipsNatural * FIT.pace[0])); a <= Math.floor(skipsNatural * FIT.pace[1]); a++) {
+    for (let b = Math.ceil(a * aLo / (2 * Math.PI)); b <= Math.floor(a * aHi / (2 * Math.PI)); b++) {
+      const target = 2 * Math.PI * b / a;
+      // the skip angle grows with frequency: estimate how far it must move, and how much the pace must
+      const df = Math.log(target / natural.skipAngle) / Math.log(aHi / aLo) * Math.log(fHi / fLo);
+      const cost = Math.abs(df) + 0.5 * Math.abs(Math.log(a / skipsNatural));
+      if (!best || cost < best.cost) best = { a, target, cost };
+    }
+  }
+  if (!best) return null;
+  let lo = fLo, hi = fHi;                       // the exact frequency, by bisection
+  for (let k = 0; k < 40; k++) {
+    const mid = 0.5 * (lo + hi);
+    if (angle(mid) < best.target) lo = mid; else hi = mid;
+  }
+  const skip = traceSkip(l, { omega: omega * 0.5 * (lo + hi) });
+  return { skip, rate: best.a * skip.skipTime / loop };
+}
+
 /**
  * options: { modes: [l, ...], frequencies: [f, ...], omega, trail, speed, colors, width }
  *   frequencies: each mode's frequency in units of the reference frequency (for the pulsating star:
@@ -133,32 +168,24 @@ export function createRayPainter(options = {}) {
   const frequencyOf = i => Number(freqs[Math.min(i, freqs.length - 1)]) || 1;
   const rays = o.modes.map((l, i) => {
     const frequency = frequencyOf(i);
-    const skip = traceSkip(l, { omega: o.omega * frequency });
+    let skip = traceSkip(l, { omega: o.omega * frequency });
+    let rate = UNITS_PER_SECOND * o.speed;   // ray time units per second
+    // loop (looping animations): the picture must repeat after exactly o.loop seconds (see fitLoop)
+    if (o.loop > 0) {
+      const fit = fitLoop(l, o.omega * frequency, rate, o.loop);
+      if (fit) ({ skip, rate } = fit);
+    }
     const roundTime = skip.skipTime * 2 * Math.PI / skip.skipAngle;   // once round the star (ray units)
     // the same mode more than once (data-rays="1, 1, 1"): the copies start spread evenly round the star
     const same = o.modes.map((m, j) => j).filter(j => o.modes[j] === l && frequencyOf(j) === frequency);
     return {
-      l, frequency, ...skip,
+      l, frequency, ...skip, rate,
       start: same.length > 1 ? 2 * Math.PI * same.indexOf(i) / same.length : 0,   // where it starts (from the top)
       flip: i % 2 ? -1 : 1,                   // every other mode goes the other way round
       color: o.colors[i % o.colors.length],
       trailTime: trail * roundTime,
-      rate: UNITS_PER_SECOND * o.speed,      // ray time units per second
-      drift: 0,                              // extra turn of the whole ray, radians per second
-      turn: 0,                               // ... and how far it has turned now
     };
   });
-  // loop (seconds, for looping animations): the picture must repeat after exactly that time. Each ray
-  // makes a whole number of skips in it (its pace nudged a little), and the small angle by which that
-  // misses a whole number of turns is taken out by turning the ray very slowly over the loop.
-  if (o.loop > 0) {
-    for (const ray of rays) {
-      const skips = Math.max(1, Math.round(o.loop * ray.rate / ray.skipTime));
-      const turns = Math.round(skips * ray.skipAngle / (2 * Math.PI));
-      ray.rate = skips * ray.skipTime / o.loop;
-      ray.drift = -(skips * ray.skipAngle - 2 * Math.PI * turns) / o.loop;
-    }
-  }
 
   let size = 0;
   function setSize(px) {
@@ -170,7 +197,7 @@ export function createRayPainter(options = {}) {
 
   // the point j of skip k of a ray (in the disc, y up) and its time
   const pointOf = (ray, k, j) => {
-    const th = ray.start + ray.turn + k * ray.skipAngle + ray.theta[j];
+    const th = ray.start + k * ray.skipAngle + ray.theta[j];
     return [ray.flip * ray.r[j] * Math.sin(th), ray.r[j] * Math.cos(th), k * ray.skipTime + ray.t[j]];
   };
   // the index of the last point of a skip at or before local time tl
@@ -190,7 +217,6 @@ export function createRayPainter(options = {}) {
     ctx.lineJoin = 'round';
     for (const ray of rays) {
       const simNow = time * ray.rate;
-      ray.turn = ray.drift * time;
       // the inner turning point: a dotted circle
       ctx.globalAlpha = 0.55;
       ctx.strokeStyle = ray.color;

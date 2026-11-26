@@ -37,7 +37,7 @@
 <script type="module">
   import { createStar } from '../../plugins/sphericalHarmonics.js';
   import { createStellar } from '../../plugins/stellar.js';
-  import { createRayPainter, DISC } from '../../plugins/lib/rays.js';
+  import { createRayPainter, DISC, fitLoop } from '../../plugins/lib/rays.js';
 
   const stage = document.getElementById('stage');
   let canvas = null;          // the canvas a frame is read from
@@ -102,6 +102,10 @@
     window.advance(ms);
     return canvas.toDataURL('image/png');
   };
+
+  // Can every ray repeat after `loop` seconds without turning (see fitLoop in rays.js)?
+  window.rayLoopFits = (modes, freqs, omega, speed, loop) =>
+    modes.every((l, i) => fitLoop(l, omega * (Number(freqs[Math.min(i, freqs.length - 1)]) || 1), 4 * speed, loop));
 
   window.rendererReady = true;
 </script>
