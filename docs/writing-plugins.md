@@ -17,7 +17,7 @@ Helpers in `plugins/lib/revealHelpers.js`:
 
 | Helper | What it does |
 |---|---|
-| `readOptions(el, ATTRIBUTES)` | data-attributes → options. `ATTRIBUTES` maps `camelCasedAttribute: [optionName, converter]`; converters: `Number`, `String`, `bool`, `numberList`, `stringList`. `data-size` sets width and height. |
+| `readOptions(el, ATTRIBUTES)` | data-attributes → options. `ATTRIBUTES` maps `camelCasedAttribute: [optionName, converter]`; converters: `Number`, `String`, `bool`, `numberList`, `stringList`. `data-size` sets width and height. (The star plugins size themselves from `data-radius` instead and reserve their box with `starBox(el, canvasSize, deck, hasLabel)`.) |
 | `reserveSize(el, w, h)` | Give the element its final size at once (it is created lazily). |
 | `triggerFor(el, 'swingStep')` | If the element has `data-swing-step`, insert an invisible fragment after it: one press of "next". Returns it (or null). |
 | `isShown(trigger)` | Has that press happened? |

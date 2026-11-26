@@ -12,6 +12,8 @@ export function createPendulum(container, options = {}) {
     angle: 30,                      // amplitude in degrees
     period: 2,                      // seconds per full swing
     swinging: true,                 // false = held at the starting angle until release()
+    raised: true,                   // false = hanging straight down until raise() lifts it to the starting angle
+    raiseDuration: 1.2,             // seconds to lift it (or lower it again)
     pivotY: 30,                     // px from the top
     pivotSize: 16,
     rodWidth: 4,
@@ -56,6 +58,8 @@ export function createPendulum(container, options = {}) {
   }
 
   let swingTime = 0;                // seconds since release
+  let lift = opts.raised ? 1 : 0;   // 0 = hanging straight down, 1 = at the starting angle
+  const ease = p => p * p * (3 - 2 * p);
   let arrowAlpha = opts.arrow ? 1 : 0;
 
   function draw() {
@@ -64,7 +68,7 @@ export function createPendulum(container, options = {}) {
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 
     const amp = opts.angle * Math.PI / 180;
-    const theta = opts.swinging ? amp * Math.cos(2 * Math.PI * swingTime / opts.period) : amp;
+    const theta = opts.swinging ? amp * Math.cos(2 * Math.PI * swingTime / opts.period) : amp * ease(lift);
     const px = opts.width / 2, py = opts.pivotY;
     const bx = px + opts.length * Math.sin(theta);
     const by = py + opts.length * Math.cos(theta);
@@ -89,18 +93,10 @@ export function createPendulum(container, options = {}) {
     ctx.lineTo(bx, by);
     ctx.stroke();
 
-    const r = opts.bobSize / 2;
-    const g = ctx.createRadialGradient(bx - r * 0.35, by - r * 0.35, r * 0.1, bx, by, r);
-    g.addColorStop(0, '#ffffff');
-    g.addColorStop(0.25, opts.bobColor);
-    g.addColorStop(1, opts.bobColor);
-    ctx.fillStyle = g;
-    ctx.shadowColor = opts.bobColor;
-    ctx.shadowBlur = r * 0.8;
+    ctx.fillStyle = opts.bobColor;                 // flat, no highlight or glow
     ctx.beginPath();
-    ctx.arc(bx, by, r, 0, 2 * Math.PI);
+    ctx.arc(bx, by, opts.bobSize / 2, 0, 2 * Math.PI);
     ctx.fill();
-    ctx.shadowBlur = 0;
 
     ctx.fillStyle = opts.pivotColor;
     ctx.strokeStyle = opts.pivotBorderColor;
@@ -164,6 +160,12 @@ export function createPendulum(container, options = {}) {
     last = now;
     let moving = false;
     if (opts.swinging) { swingTime += dt; moving = true; }
+    const liftTarget = opts.raised ? 1 : 0;
+    if (lift !== liftTarget) {
+      const step = dt / Math.max(0.01, opts.raiseDuration);
+      lift = liftTarget > lift ? Math.min(1, lift + step) : Math.max(0, lift - step);
+      moving = true;
+    }
     const target = opts.arrow ? 1 : 0;
     if (arrowAlpha !== target) {
       const step = dt / Math.max(0.01, opts.fadeDuration);
@@ -193,6 +195,11 @@ export function createPendulum(container, options = {}) {
     stop,
     release() { if (!opts.swinging) { opts.swinging = true; swingTime = 0; } },   // let go of the bob
     hold() { opts.swinging = false; swingTime = 0; dirty = true; },               // back to the start angle
+    raise(on = true, snap = false) {                                              // lift it to the start angle (or lower it)
+      opts.raised = on;
+      if (snap) lift = on ? 1 : 0;
+      dirty = true;
+    },
     showArrow(on = true, snap = false) {
       opts.arrow = on;
       if (snap) arrowAlpha = on ? 1 : 0;

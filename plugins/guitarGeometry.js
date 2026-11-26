@@ -1,4 +1,4 @@
-// js_routines/guitarGeometry.js
+// plugins/guitarGeometry.js
 // All the numbers that define the look and the layout of the guitar. Model units are
 // millimetres; x runs along the guitar (tail -> headstock), y is up.
 // This is the file to edit when you tweak the guitar's shape.
@@ -56,17 +56,3 @@ export const OUTLINE = [
   ...OUTLINE_UPPER,
   ...OUTLINE_UPPER.slice(1, -1).reverse().map(([x, y]) => [x, -y]),
 ];
-
-// Open-string tuning E2 A2 D3 G3 B3 E4 in Hz, low to high
-export const TUNING = [82.41, 110.0, 146.83, 196.0, 246.94, 329.63];
-
-// The part of the model that is visible (follows the guitar's length)
-export const VIEW = { xMin: -20, xMax: X_END + 20, yMin: -200, yMax: 200 };
-
-/** End points of string i (0 = lowest string, drawn at the bottom). */
-export function stringEnds(i) {
-  return {
-    x0: X_BRIDGE, y0: (i - 2.5) * 11,             // spread wider at the bridge...
-    x1: X_NUT,    y1: (i - 2.5) * 7,              // ...than at the nut
-  };
-}

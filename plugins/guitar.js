@@ -1,108 +1,147 @@
 // plugins/guitar.js
-// A minimalistic 2D guitar with vibrating, clickable strings, and a cartoon "wiggle" of the whole
-// instrument in toy vibration modes. Geometry lives in guitarGeometry.js, the string physics in
-// stringModes.js. As a slide element: <div class="guitar" data-...>, see guitarPlugin.js / docs/guitar.md.
+// A minimalistic guitar that wiggles in cartoon vibration modes:
+//   - 'edge': small waves running around the edge of the body (seen straight from the front)
+//   - motions of the whole instrument: the top plate breathing or rocking, the body bending, the neck
+//     swinging. These move out of the plane of the top plate, so you cannot see them from the front:
+//     the guitar first turns to be seen at a slant (like a computer model of a vibrating guitar).
+//     It stays a flat surface (no box) in every pose.
+// Geometry (outline, neck, depths) lives in guitarGeometry.js.
+// As a slide element: <div class="guitar">, see guitarPlugin.js / docs/guitar.md.
 
 import {
   X_BRIDGE, X_NUT, X_END, X_FRETBOARD_END, HEADSTOCK_LENGTH, NUM_FRETS, BODY_END,
-  NUT_HALF_WIDTH, BOARD_END_HALF_WIDTH, SOUND_HOLE, OUTLINE, TUNING, VIEW,
-  fretDistance, fretboardHalfWidth, stringEnds,
+  NUT_HALF_WIDTH, SOUND_HOLE, OUTLINE,
+  fretDistance, fretboardHalfWidth,
 } from './guitarGeometry.js';
-import { modeFrequency, pluckAmplitudes, modeAmplitudesAt } from './stringModes.js';
 import { pixelRatio } from './lib/revealHelpers.js';
 
-/** Smooth closed curve through the points P (uniform Catmull-Rom, written as Bezier segments). */
-function smoothClosedPath(ctx, P) {
-  const n = P.length;
-  ctx.moveTo(P[0][0], P[0][1]);
+// ---------- Body outline, sampled once ----------
+
+/** Points along a smooth closed curve through P (uniform Catmull-Rom), `per` samples per segment. */
+function sampleClosed(P, per) {
+  const n = P.length, out = [];
   for (let i = 0; i < n; i++) {
     const p0 = P[(i - 1 + n) % n], p1 = P[i], p2 = P[(i + 1) % n], p3 = P[(i + 2) % n];
-    ctx.bezierCurveTo(
-      p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
-      p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6,
-      p2[0], p2[1]
-    );
+    for (let j = 0; j < per; j++) {
+      const t = j / per, t2 = t * t, t3 = t2 * t;
+      const c = k => 0.5 * (2 * p1[k] + (p2[k] - p0[k]) * t + (2 * p0[k] - 5 * p1[k] + 4 * p2[k] - p3[k]) * t2
+                            + (3 * p1[k] - p0[k] - 3 * p2[k] + p3[k]) * t3);
+      out.push([c(0), c(1)]);
+    }
   }
-  ctx.closePath();
+  return out;
 }
 
-const N_MAX = 60;      // most modes kept per string
-const M = 200;         // samples along a string when drawing it
+// The outline as ~250 points, each with its distance s along the edge and the outward normal
+const EDGE = (() => {
+  const pts = sampleClosed(OUTLINE, 12);
+  const n = pts.length;
+  let s = 0;
+  return pts.map((p, i) => {
+    const a = pts[(i - 1 + n) % n], b = pts[(i + 1) % n];
+    const tx = b[0] - a[0], ty = b[1] - a[1], len = Math.hypot(tx, ty) || 1;
+    if (i > 0) s += Math.hypot(p[0] - pts[i - 1][0], p[1] - pts[i - 1][1]);
+    // The outline runs clockwise (upper half first), so the outward normal is the tangent turned left
+    return { x: p[0], y: p[1], nx: -ty / len, ny: tx / len, s };
+  });
+})();
+const EDGE_LENGTH = EDGE[EDGE.length - 1].s + Math.hypot(EDGE[0].x - EDGE.at(-1).x, EDGE[0].y - EDGE.at(-1).y);
 
-// ---------- Toy body modes ----------
+// Half-width of the body at x, read off the upper half of the sampled outline
+const HALF_WIDTH = (() => {
+  const upper = EDGE.filter(p => p.y >= 0).sort((a, b) => a.x - b.x);
+  const table = new Float32Array(BODY_END + 1);
+  let j = 0;
+  for (let x = 0; x <= BODY_END; x++) {
+    while (j < upper.length - 2 && upper[j + 1].x < x) j++;
+    const a = upper[j], b = upper[j + 1];
+    const f = Math.min(1, Math.max(0, (x - a.x) / ((b.x - a.x) || 1)));
+    table[x] = a.y + f * (b.y - a.y);
+  }
+  return table;
+})();
+function halfWidth(x) {
+  if (x <= 0 || x >= BODY_END) return 0;
+  const i = Math.floor(x), f = x - i;
+  return HALF_WIDTH[i] * (1 - f) + HALF_WIDTH[Math.min(BODY_END, i + 1)] * f;
+}
+
+// ---------- Mode shapes ----------
+// Shapes of the top plate are 0 at the edge of the body (the plate is glued to the sides there).
+const eta = (x, y) => { const h = halfWidth(x); return h > 0 ? Math.max(-1, Math.min(1, y / h)) : 0; };
+const across = (x, y) => 1 - eta(x, y) ** 2;                                       // 1 in the middle, 0 at the edge
+const lowerBout = x => (x > 0 && x < 300 ? Math.sin(Math.PI * x / 300) ** 2 : 0);   // a bump on the lower bout
+const upperBout = x => (x > 300 && x < BODY_END ? Math.sin(Math.PI * (x - 300) / (BODY_END - 300)) ** 2 : 0);
+
+// First bending mode of a free bar (exact shape): both ends one way, the middle the other way
+function freeBar(xi) {
+  const b = 4.730041 * xi, sigma = 0.982502;
+  return (Math.cosh(b) + Math.cos(b) - sigma * (Math.sinh(b) + Math.sin(b))) / 2;   // 1 at the ends
+}
+
+// ---------- Toy modes ----------
 // Not a model of a real guitar, but each one is a kind of motion real guitars do have.
-//   freq     wiggles per second on screen
-//   size     how far it moves (mm at amount = 1)
-//   patches  colored patches on the top plate: [x, y, radius, sign]; red = moving towards you,
-//            blue = away (same colors as the spherical-harmonic stars, so the link is easy to make)
+//   kind   'edge' = waves around the edge, in the plane of the top (no turning needed)
+//          'top'  = the top plate moves in and out (the box itself stays)
+//          'body' = the whole instrument moves (top, back and neck together)
+//   freq   wiggles per second on screen;  size  mm at amount 1
+//   shape(x, y)  how much each point of the top takes part (-1..1)
 export const WIGGLE_MODES = {
-  // The top plate breathes in and out (the "monopole", the mode that pumps air through the hole)
-  breathe: { freq: 1.1, size: 0.05, patches: [[150, 0, 150, 1]] },
-  // One side of the lower bout up while the other goes down ("cross dipole")
-  cross:   { freq: 1.6, size: 10,   patches: [[150, 85, 100, 1], [150, -85, 100, -1]] },
-  // Lower and upper bout opposite ("long dipole")
-  long:    { freq: 1.9, size: 0.04, patches: [[140, 0, 130, 1], [405, 0, 105, -1]] },
-  // The whole instrument flexes like a free bar: ends one way, middle the other
-  bend:    { freq: 0.8, size: 12,   patches: [] },
-  // The neck swings like a diving board
-  neck:    { freq: 0.6, size: 22,   patches: [] },
+  edge:    { kind: 'edge', freq: 1.0, size: 3, waves: 16 },   // waves: number of waves around the body
+  breathe: { kind: 'top',  freq: 1.1, size: 16,               // the top swells in and out ("monopole")
+             shape: (x, y) => across(x, y) * (lowerBout(x) + 0.35 * upperBout(x)) },
+  cross:   { kind: 'top',  freq: 1.6, size: 14,               // one side of the lower bout up, the other down
+             shape: (x, y) => 2.6 * eta(x, y) * across(x, y) * lowerBout(x) },
+  long:    { kind: 'top',  freq: 1.9, size: 14,               // lower and upper bout opposite
+             shape: (x, y) => across(x, y) * (lowerBout(x) - upperBout(x)) },
+  bend:    { kind: 'body', freq: 0.8, size: 35,               // the whole guitar flexes like a free bar
+             shape: x => freeBar(x / X_END) },
+  neck:    { kind: 'body', freq: 0.6, size: 60,               // the neck swings like a diving board
+             shape: x => { const xi = Math.max(0, (x - BODY_END) / (X_END - BODY_END)); return xi * xi * (3 - xi) / 2; } },
 };
+const MODE_NAMES = Object.keys(WIGGLE_MODES);
+const turns = name => WIGGLE_MODES[name]?.kind !== 'edge';     // does this mode need the slanted view?
 
-// Smooth weight that is 1 on the body and fades to 0 just past the neck join
-function bodyWeight(x) {
-  const t = Math.min(1, Math.max(0, (x - BODY_END) / 30));
-  return 1 - t * t * (3 - 2 * t);
-}
+const smooth = t => t * t * (3 - 2 * t);
+const DEG = Math.PI / 180;
 
 export function createGuitar(container, options = {}) {
   const opts = {
     width: 800, height: 373,         // layout size in CSS pixels
     renderScale: 1,                  // render-resolution multiplier (for reveal's slide scale)
     bodyColor: '#8a5a2b',
-    edgeColor: '#5a3a1a',
+    edgeColor: '#3d2611',
     neckColor: '#3b2a1a',
     headColor: '#2b1d12',
     holeColor: '#1a1008',
-    stringColor: '#e6e6e6',
     fretColor: '#c9c2b4',
     nutColor: '#e8e0cf',
-    holdColor: '#ffd27a',            // colour of a string while you hold it
-    strings: true,                   // false = a guitar without strings (and without the nut and pegs' strings)
 
-    slowdown: 100,        // slow motion: displayed frequency = real frequency / slowdown
-    maxDisplayHz: 20,     // modes that would flicker faster than this on screen are left out
-    decayTime: 5,         // seconds (on screen) for the fundamental to fall to 1/e of its amplitude
-    decaySlope: 0.5,      // how much faster the overtones decay (0 = all modes decay equally)
-    stiffness: 0,         // inharmonicity B: 0 = perfectly harmonic; real strings ~ 0.0001-0.001
-    pluckHeight: 8,       // pluck height in mm for a plain click
-    maxPull: 18,          // largest sideways pull in mm when dragging a string
-    interactive: true,    // false = the strings can only be plucked from code
+    // ---- view ----
+    tilt: 0,                         // degrees: 0 = seen straight from the front
+    wiggleTilt: 60,                  // tilt while the whole-instrument modes run (it turns there and back)
+    yaw: 0,                          // degrees: turn about the vertical (neck towards / away from you)
+    angle: 0,                        // degrees: rotation in the plane of the slide
+    turnTime: 1.2,                   // seconds to turn
 
-    wiggle: ['breathe', 'bend'],     // body modes used by wiggle(); names from WIGGLE_MODES
+    // ---- wiggle ----
+    wiggle: [],                      // modes to wiggle in from the start; names from WIGGLE_MODES
     wiggleAmount: 1,                 // overall size of the wiggle
     wiggleSpeed: 1,                  // overall speed of the wiggle
-    wiggleRamp: 0.8,                 // seconds to fade the wiggle in / out
-    wigglePatches: true,             // show the red / blue patches on the top plate
-    wiggleColors: ['#1a4dff', '#ff1a1a'],   // [moving away, moving towards you]
-    wiggleOpacity: 0.7,
-    ...options
+    wiggleRamp: 0.8,                 // seconds to fade a mode in / out
+    ...options,
   };
 
-  // Warn about misspelled option names
   const known = new Set(Object.keys(opts));
   for (const key of Object.keys(options)) {
     if (!known.has(key)) console.warn(`createGuitar: unknown option "${key}"`);
   }
 
-  // Reserve the layout space and create the canvas
   container.style.width = opts.width + 'px';
   container.style.height = opts.height + 'px';
   const canvas = document.createElement('canvas');
   canvas.style.width = opts.width + 'px';
   canvas.style.height = opts.height + 'px';
-  canvas.style.touchAction = 'none';              // the browser must not scroll or zoom while you drag
-  canvas.style.userSelect = 'none';
-  canvas.setAttribute('data-prevent-swipe', '');  // reveal.js: do not change slide on a touch swipe here
   container.appendChild(canvas);
   const ctx = canvas.getContext('2d');
 
@@ -113,407 +152,261 @@ export function createGuitar(container, options = {}) {
     canvas.height = Math.round(opts.height * ratio);
   }
 
-  // ---------- View transform: model (mm, y up) <-> CSS pixels ----------
-  //   pixel_x = k * (X - cx) + width / 2        pixel_y = height / 2 - k * Y
+  // ---------- Wiggle state ----------
+  // target: the modes asked for; level[name]: 0..1 fade of each mode; turn: 0 = front view, 1 = slanted.
+  // Order of things: turn first, then wiggle; when stopping, calm down first, then turn back.
+  const state = { target: [], level: new Map(), turn: 0, time: 0 };
+  let active = [];                   // this frame: [{ name, mode, a }] with a = signed amplitude (-1..1)
+  let dirty = true;
 
-  function getView() {
-    const k = Math.min(opts.width / (VIEW.xMax - VIEW.xMin), opts.height / (VIEW.yMax - VIEW.yMin));
-    const cx = (VIEW.xMin + VIEW.xMax) / 2;
-    return { k, cx };
+  function cleanList(modes) {
+    const list = Array.isArray(modes) ? modes : String(modes ?? '').split(',');
+    return list.map(s => String(s).trim()).filter(s => s && s !== 'none').filter(name => {
+      if (name in WIGGLE_MODES) return true;
+      console.warn(`createGuitar: unknown wiggle mode "${name}" (use ${MODE_NAMES.join(', ')})`);
+      return false;
+    });
   }
 
-  /** Pointer event -> model coordinates. Reveal scales the slide with CSS, so we rescale by
-   *  the canvas' on-screen size relative to its layout size. */
-  function toModel(e) {
-    const rect = canvas.getBoundingClientRect();
-    const px = (e.clientX - rect.left) * (opts.width / rect.width);
-    const py = (e.clientY - rect.top) * (opts.height / rect.height);
-    const { k, cx } = getView();
-    return { X: cx + (px - opts.width / 2) / k, Y: (opts.height / 2 - py) / k };
-  }
-
-  // ---------- String state ----------
-
-  // sin(n*pi*s) at the M+1 sample points, computed once: sinTable[n * (M + 1) + j]
-  const sinTable = new Float32Array((N_MAX + 1) * (M + 1));
-  for (let n = 1; n <= N_MAX; n++) {
-    for (let j = 0; j <= M; j++) sinTable[n * (M + 1) + j] = Math.sin(n * Math.PI * j / M);
-  }
-
-  const strings = Array.from({ length: 6 }, () => ({
-    active: false,                   // is this string currently vibrating?
-    t0: 0,                           // moment of the pluck (seconds, performance clock)
-    t: 0,                            // seconds since the pluck (negative while waiting for a strum delay)
-    nModes: 0,
-    b: null,                         // mode amplitudes at t = 0
-    a: new Float64Array(N_MAX + 1),  // mode amplitudes right now
-  }));
-
-  let held = null;                   // while dragging: { i, xFrac, h, dragged, startX, startY }
-  let dirty = true;                  // does the picture need redrawing?
-
-  /** Release string i (0 = lowest) from a triangle of height h (mm, signed) with its peak at a
-   *  fraction xFrac of the string, measured from the bridge. */
-  function pluck(i, xFrac = 0.3, height = opts.pluckHeight, delay = 0) {
-    if (!(i >= 0 && i <= 5)) throw new Error('pluck: string index must be 0..5 (0 = lowest string)');
-    const st = strings[i];
-    const f1 = TUNING[i] / opts.slowdown;                 // displayed fundamental frequency (Hz)
-    let n = 1;                                            // keep the modes that stay below maxDisplayHz
-    while (n < N_MAX && modeFrequency(n + 1, f1, opts.stiffness) <= opts.maxDisplayHz) n++;
-    st.nModes = n;
-    st.b = pluckAmplitudes(n, xFrac, height);
-    st.t0 = performance.now() / 1000 + delay;
-    st.t = -delay;
-    st.active = true;
-    dirty = true;
-  }
-
-  /** Pluck all six strings one after another, like a strum. */
-  function strum(xFrac = 0.3, height = opts.pluckHeight, gap = 0.08) {
-    for (let i = 0; i < 6; i++) pluck(i, xFrac, height, i * gap);
-  }
-
-  // ---------- Body wiggle ----------
-  // level fades between 0 (still) and 1 (full wiggle); phase advances with time.
-
-  const wiggleState = { target: 0, level: 0, time: 0 };
-  let modeAmps = [];                 // [{ mode, a }] for the current frame, a = signed amplitude
-
-  function wiggle(modes) {
-    if (modes) opts.wiggle = Array.isArray(modes) ? modes : String(modes).split(',').map(s => s.trim());
-    for (const name of opts.wiggle) {
-      if (!(name in WIGGLE_MODES)) console.warn(`createGuitar: unknown wiggle mode "${name}" (use ${Object.keys(WIGGLE_MODES).join(', ')})`);
+  /** Wiggle in these modes from now on ([] or 'none' = calm down). snap = at once, without fading or turning. */
+  function setWiggle(modes, snap = false) {
+    state.target = cleanList(modes);
+    if (snap) {
+      state.level = new Map(state.target.map(n => [n, 1]));
+      state.turn = state.target.some(turns) ? 1 : 0;
+      updateActive();
     }
-    wiggleState.target = 1;
     dirty = true;
-  }
-  function stopWiggle() { wiggleState.target = 0; }
-  function snapWiggle(on) {
-    wiggleState.target = wiggleState.level = on ? 1 : 0;
-    if (on) wiggle(); else modeAmps = [];
-    dirty = true;
+    if (frameId === null) draw();
   }
 
   function updateWiggle(dt) {
-    const w = wiggleState;
-    if (w.level !== w.target) {
-      const step = dt / Math.max(0.01, opts.wiggleRamp);
-      w.level = w.target > w.level ? Math.min(1, w.level + step) : Math.max(0, w.level - step);
+    const want = new Set(state.target);
+    const wantTurn = state.target.some(turns);
+    const stillMoving = [...state.level].some(([n, l]) => turns(n) && l > 0);
+    const turnStep = opts.turnTime > 0 ? dt / opts.turnTime : 1;
+    const turnBefore = state.turn;
+    if (wantTurn) state.turn = Math.min(1, state.turn + turnStep);
+    else if (!stillMoving) state.turn = Math.max(0, state.turn - turnStep);
+
+    const step = dt / Math.max(0.01, opts.wiggleRamp);
+    for (const name of new Set([...want, ...state.level.keys()])) {
+      const goal = want.has(name) && (!turns(name) || state.turn >= 1) ? 1 : 0;
+      const l = state.level.get(name) ?? 0;
+      const next = goal > l ? Math.min(1, l + step) : Math.max(0, l - step);
+      if (next === 0 && goal === 0) state.level.delete(name); else state.level.set(name, next);
     }
-    if (w.level === 0) { modeAmps = []; return false; }
-    w.time += dt * opts.wiggleSpeed;
-    const level = w.level * w.level * (3 - 2 * w.level);
-    modeAmps = opts.wiggle.filter(n => n in WIGGLE_MODES).map((name, i) => {
-      const mode = WIGGLE_MODES[name];
-      return { name, mode, a: level * opts.wiggleAmount * Math.sin(2 * Math.PI * mode.freq * w.time + i * 1.3) };
-    });
-    return true;
+    if (state.level.size) state.time += dt * opts.wiggleSpeed;
+    updateActive();
+    return state.level.size > 0 || state.turn !== turnBefore;
   }
 
-  /** Where the model point (x, y) is drawn right now, with the wiggle applied. */
-  function P(x, y) {
-    if (modeAmps.length === 0) return [x, y];
-    let dx = 0, dy = 0;
-    const wb = bodyWeight(x);
-    for (const { name, mode, a } of modeAmps) {
-      const s = a * mode.size;
-      if (name === 'breathe') {                       // body swells about the lower bout
-        dx += wb * s * (x - 150); dy += wb * s * y;
-      } else if (name === 'long') {                   // lower bout swells while the upper bout shrinks
-        const wl = Math.min(1, Math.max(0, (330 - x) / 40));   // 1 on the lower bout, 0 on the upper
-        const wu = 1 - wl;
-        dx += wb * s * (wl * (x - 140) - wu * (x - 405));
-        dy += wb * s * y * (wl - wu);
-      } else if (name === 'cross') {                  // the lower bout rocks sideways
-        dy += wb * s * Math.exp(-(((x - 150) / 140) ** 2));
-      } else if (name === 'bend') {                   // free bar: ends in phase, middle opposite
-        dy += s * Math.cos(2 * Math.PI * x / X_END);
-      } else if (name === 'neck') {                   // cantilever clamped at the body
-        const xi = Math.max(0, (x - BODY_END) / (X_END - BODY_END));
-        dy += s * xi * xi * (3 - xi) / 2;
+  function updateActive() {
+    active = [...state.level].map(([name, l]) => {
+      const mode = WIGGLE_MODES[name];
+      const phase = MODE_NAMES.indexOf(name) * 1.3;
+      return { name, mode, a: smooth(l) * Math.sin(2 * Math.PI * mode.freq * state.time + phase) };
+    });
+  }
+
+  // ---------- Displacements ----------
+
+  /** Out-of-plane displacement (mm) of the whole instrument at x. */
+  function wBody(x) {
+    let w = 0;
+    for (const { mode, a } of active) if (mode.kind === 'body') w += a * mode.size * mode.shape(x);
+    return w * opts.wiggleAmount;
+  }
+
+  /** Out-of-plane displacement (mm) of the top plate (or the neck on top of it) at (x, y). */
+  function wTop(x, y) {
+    let w = 0;
+    for (const { mode, a } of active) if (mode.kind === 'top') w += a * mode.size * mode.shape(x, y);
+    return w * opts.wiggleAmount + wBody(x);
+  }
+
+  /** In-plane push (mm) of the edge point at distance s along the outline: the travelling waves. */
+  function edgePush(s) {
+    let d = 0;
+    for (const { mode, name } of active) {
+      if (mode.kind !== 'edge') continue;
+      const level = smooth(state.level.get(name) ?? 0);      // a travelling wave: no standing sine factor
+      d += level * mode.size * Math.sin(2 * Math.PI * (mode.waves * s / EDGE_LENGTH - mode.freq * state.time));
+    }
+    return d * opts.wiggleAmount;
+  }
+
+  // ---------- View: model (mm; x along the guitar, y across, z out of the top) -> screen (mm, y up) ----------
+  const XC = X_END / 2;              // the guitar turns about its middle
+  let rot = null;                    // cos / sin of the current angles
+
+  function setPose(tiltDeg) {
+    const t = tiltDeg * DEG, y = opts.yaw * DEG, r = opts.angle * DEG;
+    rot = { ct: Math.cos(t), st: Math.sin(t), cy: Math.cos(y), sy: Math.sin(y), cr: Math.cos(r), sr: Math.sin(r) };
+  }
+
+  function project(x, y, z) {
+    const { ct, st, cy, sy, cr, sr } = rot;
+    const y1 = y * ct + z * st;               // tilt about the long axis: the top leans back,
+    const z1 = -y * st + z * ct;              // its lower side comes into view below it
+    const x2 = (x - XC) * cy + z1 * sy;       // yaw about the vertical
+    return [x2 * cr - y1 * sr, x2 * sr + y1 * cr];   // rotation in the slide's plane
+  }
+
+  const currentTilt = () => opts.tilt + (opts.wiggleTilt - opts.tilt) * smooth(state.turn);
+
+  // Scale and centre so that the guitar fits in both poses (front and slanted), with room for the wiggle
+  let fit = null;
+  function computeFit() {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    const add = ([u, v]) => { x0 = Math.min(x0, u); x1 = Math.max(x1, u); y0 = Math.min(y0, v); y1 = Math.max(y1, v); };
+    const room = 30;                                              // mm of wiggle room
+    for (const tilt of [opts.tilt, opts.wiggleTilt]) {
+      setPose(tilt);
+      for (let i = 0; i < EDGE.length; i += 6) {
+        for (const z of [room, -room]) add(project(EDGE[i].x, EDGE[i].y, z));
+      }
+      for (const x of [BODY_END, X_NUT, X_END]) {
+        for (const y of [-NUT_HALF_WIDTH - 15, NUT_HALF_WIDTH + 15]) {
+          for (const z of [70, -70]) add(project(x, y, z));
+        }
       }
     }
-    return [x + dx, y + dy];
-  }
-
-  // Path helpers that bend straight lines along with the wiggle
-  function moveTo(x, y) { const [u, v] = P(x, y); ctx.moveTo(u, v); }
-  function lineTo(x, y) { const [u, v] = P(x, y); ctx.lineTo(u, v); }
-  function segment(x0, y0, x1, y1, n = 1) {
-    if (modeAmps.length === 0) n = 1;
-    for (let j = 1; j <= n; j++) lineTo(x0 + (x1 - x0) * j / n, y0 + (y1 - y0) * j / n);
-  }
-  function polygon(points, n = 1) {
-    ctx.beginPath();
-    moveTo(...points[0]);
-    for (let i = 0; i < points.length; i++) {
-      const a = points[i], b = points[(i + 1) % points.length];
-      segment(a[0], a[1], b[0], b[1], n);
-    }
-    ctx.closePath();
-  }
-
-  // ---------- Mouse / touch interaction ----------
-
-  /** y of the (straight) string i at position X. */
-  function lineY(i, X) {
-    const { x0, y0, x1, y1 } = stringEnds(i);
-    return y0 + (y1 - y0) * (X - x0) / (x1 - x0);
-  }
-
-  /** Which string is under the model point (X, Y)? Returns its index, or -1. */
-  function hitString(X, Y) {
-    if (!opts.strings) return -1;
-    const { x0, x1 } = stringEnds(0);
-    if (X < x0 || X > x1) return -1;
-    const spacing = Math.abs(lineY(1, X) - lineY(0, X));   // local distance between neighbouring strings
-    let best = -1, bestDist = 0.5 * spacing;               // the pointer must be within half a spacing
-    for (let i = 0; i < 6; i++) {
-      const dist = Math.abs(Y - lineY(i, X));
-      if (dist <= bestDist) { best = i; bestDist = dist; }
-    }
-    return best;
-  }
-
-  /** Update the held string's shape from the pointer: the peak follows the pointer. */
-  function holdFrom(e) {
-    const { X, Y } = toModel(e);
-    const { x0, x1 } = stringEnds(held.i);
-    held.xFrac = Math.min(0.98, Math.max(0.02, (X - x0) / (x1 - x0)));
-    const h = Y - lineY(held.i, x0 + held.xFrac * (x1 - x0));
-    held.h = Math.max(-opts.maxPull, Math.min(opts.maxPull, h));
-    dirty = true;
-  }
-
-  function onPointerDown(e) {
-    const { X, Y } = toModel(e);
-    const i = hitString(X, Y);
-    if (i < 0) return;
-    canvas.setPointerCapture(e.pointerId);                 // keep receiving events outside the canvas
-    strings[i].active = false;                             // a finger on the string stops it
-    held = { i, xFrac: 0.3, h: 0, dragged: false, startX: e.clientX, startY: e.clientY };
-    holdFrom(e);
-    canvas.style.cursor = 'grabbing';
-    e.preventDefault();
-  }
-
-  function onPointerMove(e) {
-    if (held) {
-      holdFrom(e);
-      if (Math.hypot(e.clientX - held.startX, e.clientY - held.startY) > 3) held.dragged = true;
-      return;
-    }
-    const { X, Y } = toModel(e);
-    canvas.style.cursor = hitString(X, Y) >= 0 ? 'grab' : 'default';
-  }
-
-  function onPointerUp() {
-    if (!held) return;
-    const { i, xFrac, h, dragged } = held;
-    held = null;
-    canvas.style.cursor = 'default';
-    // A plain click plucks with the default height towards the side that was clicked;
-    // a drag releases the string from the shape it was pulled into.
-    const height = (dragged && Math.abs(h) >= 0.5) ? h : (h < 0 ? -opts.pluckHeight : opts.pluckHeight);
-    pluck(i, xFrac, height);
-  }
-
-  if (opts.interactive) {
-    canvas.addEventListener('pointerdown', onPointerDown);
-    canvas.addEventListener('pointermove', onPointerMove);
-    canvas.addEventListener('pointerup', onPointerUp);
-    canvas.addEventListener('pointercancel', onPointerUp);
+    const margin = 0.03 * Math.max(x1 - x0, y1 - y0);
+    x0 -= margin; x1 += margin; y0 -= margin; y1 += margin;
+    const k = Math.min(opts.width / (x1 - x0), opts.height / (y1 - y0));
+    fit = { k, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2 };
   }
 
   // ---------- Drawing ----------
 
-  // Any CSS color -> "r, g, b" (the canvas does the parsing)
-  const rgbCache = new Map();
-  function toRgb(color) {
-    if (!rgbCache.has(color)) {
-      ctx.fillStyle = '#000';
-      ctx.fillStyle = color;
-      const hex = ctx.fillStyle;                           // normalised to #rrggbb
-      const n = parseInt(hex.slice(1), 16);
-      rgbCache.set(color, hex.startsWith('#') ? `${n >> 16}, ${(n >> 8) & 255}, ${n & 255}` : '255, 255, 255');
-    }
-    return rgbCache.get(color);
+  function polygon(points) {
+    ctx.beginPath();
+    points.forEach(([u, v], i) => (i ? ctx.lineTo(u, v) : ctx.moveTo(u, v)));
+    ctx.closePath();
   }
 
-  function drawPatches() {
-    if (!opts.wigglePatches || modeAmps.length === 0) return;
-    ctx.save();
-    ctx.beginPath();
-    smoothClosedPath(ctx, OUTLINE.map(([x, y]) => P(x, y)));
-    ctx.clip();
-    for (const { mode, a } of modeAmps) {
-      for (const [x, y, r, sign] of mode.patches) {
-        const v = sign * a;                                // signed: towards (+) or away (-)
-        const [cx, cy] = P(x, y);
-        const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-        const rgb = toRgb(v > 0 ? opts.wiggleColors[1] : opts.wiggleColors[0]);
-        g.addColorStop(0, `rgba(${rgb}, 1)`);
-        g.addColorStop(0.5, `rgba(${rgb}, 0.7)`);
-        g.addColorStop(1, `rgba(${rgb}, 0)`);                // fade to transparent, not to black
-        ctx.globalAlpha = Math.min(1, Math.abs(v)) * opts.wiggleOpacity;
-        ctx.fillStyle = g;
-        ctx.fillRect(cx - r, cy - r, 2 * r, 2 * r);
-      }
+  /** A flat strip of the neck between x0 and x1, half-width hw(x), at height z(x, y). */
+  function strip(x0, x1, hw, z, n) {
+    const top = [], bottom = [];
+    for (let j = 0; j <= n; j++) {
+      const x = x0 + (x1 - x0) * j / n, h = hw(x);
+      top.push(project(x, h, z(x, h)));
+      bottom.push(project(x, -h, z(x, -h)));
     }
-    ctx.restore();
+    return top.concat(bottom.reverse());
   }
+
+  // Half-width of the neck, headstock included
+  const neckHalfWidth = x => (x <= X_NUT ? fretboardHalfWidth(x) : NUT_HALF_WIDTH + 5 * (x - X_NUT) / HEADSTOCK_LENGTH);
 
   function draw() {
-    // Clear in device pixels, then switch to model coordinates (mm, y up)
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    const { k, cx } = getView();
+    if (!fit) computeFit();
+    const { k } = fit;
     ctx.setTransform(ratio * k, 0, 0, -ratio * k,
-                     ratio * (opts.width / 2 - k * cx), ratio * (opts.height / 2));
-    const px = 1 / k;                              // one CSS pixel, in model units
+                     ratio * (opts.width / 2 - k * fit.cx), ratio * (opts.height / 2 + k * fit.cy));
+    const px = 1 / k;                                       // one CSS pixel, in mm
+    ctx.lineJoin = 'round';
 
-    // Body
-    ctx.beginPath();
-    smoothClosedPath(ctx, OUTLINE.map(([x, y]) => P(x, y)));
+    const tilt = currentTilt();
+    setPose(tilt);
+
+    // The edge of the body this frame (with the travelling waves), as model points
+    const edge = EDGE.map(p => { const d = edgePush(p.s); return [p.x + p.nx * d, p.y + p.ny * d, p.x]; });
+    const top = edge.map(([x, y, x0]) => project(x, y, wBody(x0)));
+
+    // 1. The top plate
+    polygon(top);
     ctx.fillStyle = opts.bodyColor;
     ctx.fill();
+
+
+    polygon(top);
     ctx.lineWidth = 2 * px;
     ctx.strokeStyle = opts.edgeColor;
     ctx.stroke();
 
-    drawPatches();
-
-    // Fretboard (a long trapezoid, slightly wider towards the body)
-    polygon([[X_FRETBOARD_END, BOARD_END_HALF_WIDTH], [X_NUT, NUT_HALF_WIDTH],
-             [X_NUT, -NUT_HALF_WIDTH], [X_FRETBOARD_END, -BOARD_END_HALF_WIDTH]], 24);
-    ctx.fillStyle = opts.neckColor;
-    ctx.fill();
-
-    // Headstock with six tuning pegs
-    polygon([[X_NUT, NUT_HALF_WIDTH], [X_END, NUT_HALF_WIDTH + 5],
-             [X_END, -(NUT_HALF_WIDTH + 5)], [X_NUT, -NUT_HALF_WIDTH]], 6);
-    ctx.fillStyle = opts.headColor;
-    ctx.fill();
-    ctx.fillStyle = opts.stringColor;
-    for (const f of [0.25, 0.5, 0.75]) {
-      for (const s of [1, -1]) {
-        const [u, v] = P(X_NUT + f * HEADSTOCK_LENGTH, s * 31);
-        ctx.beginPath();
-        ctx.arc(u, v, 5, 0, 2 * Math.PI);
-        ctx.fill();
-      }
+    // 2. Sound hole and bridge, riding on the top
+    const hole = [];
+    for (let j = 0; j < 48; j++) {
+      const x = SOUND_HOLE.x + SOUND_HOLE.r * Math.cos(2 * Math.PI * j / 48);
+      const y = SOUND_HOLE.r * Math.sin(2 * Math.PI * j / 48);
+      hole.push(project(x, y, wTop(x, y)));
     }
-
-    // Frets (the fretboard narrows towards the nut)
-    ctx.strokeStyle = opts.fretColor;
-    ctx.lineWidth = 1.5 * px;
-    for (let n = 1; n <= NUM_FRETS; n++) {
-      const x = X_NUT - fretDistance(n);
-      const hw = fretboardHalfWidth(x);
-      ctx.beginPath();
-      moveTo(x, hw);
-      lineTo(x, -hw);
-      ctx.stroke();
-    }
-
-    // Nut
-    ctx.strokeStyle = opts.nutColor;
-    ctx.lineWidth = 3 * px;
-    ctx.beginPath();
-    moveTo(X_NUT, NUT_HALF_WIDTH);
-    lineTo(X_NUT, -NUT_HALF_WIDTH);
-    ctx.stroke();
-
-    // Sound hole (it follows the body, and breathes with it)
-    const breathe = modeAmps.find(m => m.name === 'breathe');
-    const holeR = SOUND_HOLE.r * (1 + (breathe ? breathe.a * breathe.mode.size : 0));
-    const [hx, hy] = P(SOUND_HOLE.x, 0);
-    ctx.beginPath();
-    ctx.arc(hx, hy, holeR, 0, 2 * Math.PI);
+    polygon(hole);
     ctx.fillStyle = opts.holeColor;
     ctx.fill();
     ctx.lineWidth = 3 * px;
     ctx.strokeStyle = opts.edgeColor;
     ctx.stroke();
 
-    // Bridge
-    polygon([[X_BRIDGE - 8, -50], [X_BRIDGE + 8, -50], [X_BRIDGE + 8, 50], [X_BRIDGE - 8, 50]]);
+    polygon([[X_BRIDGE - 8, -50], [X_BRIDGE + 8, -50], [X_BRIDGE + 8, 50], [X_BRIDGE - 8, 50]]
+      .map(([x, y]) => project(x, y, wTop(x, y))));
     ctx.fillStyle = opts.headColor;
     ctx.fill();
 
-    if (!opts.strings) return;
+    // 3. Neck: the fretboard and the headstock
+    const zNeck = (x, y) => wTop(x, y);
+    polygon(strip(X_FRETBOARD_END, X_NUT, fretboardHalfWidth, zNeck, 24));
+    ctx.fillStyle = opts.neckColor;
+    ctx.fill();
 
-    // Strings: thickest at the bottom (low E), thinnest at the top.
-    // A held string is a triangle; a vibrating one is the straight line plus the sum of its modes.
-    ctx.lineJoin = 'round';
-    for (let i = 0; i < 6; i++) {
-      const { x0, y0, x1, y1 } = stringEnds(i);
-      const st = strings[i];
-      const isHeld = held !== null && held.i === i;
-      ctx.strokeStyle = isHeld ? opts.holdColor : opts.stringColor;
-      ctx.lineWidth = (2.4 - 0.28 * i) * px;
-      ctx.beginPath();
-      if (isHeld) {
-        const xg = x0 + held.xFrac * (x1 - x0);
-        const yg = y0 + held.xFrac * (y1 - y0) + held.h;
-        moveTo(x0, y0);
-        segment(x0, y0, xg, yg, 12);
-        segment(xg, yg, x1, y1, 24);
-      } else if (st.active && st.t >= 0) {
-        for (let j = 0; j <= M; j++) {
-          const f = j / M;
-          let d = 0;                                          // displacement in mm
-          for (let n = 1; n <= st.nModes; n++) d += st.a[n] * sinTable[n * (M + 1) + j];
-          const x = x0 + (x1 - x0) * f;
-          const y = y0 + (y1 - y0) * f + d;
-          if (j === 0) moveTo(x, y); else lineTo(x, y);
+    polygon(strip(X_NUT, X_END, neckHalfWidth, zNeck, 6));
+    ctx.fillStyle = opts.headColor;
+    ctx.fill();
+
+    // Tuning pegs: small discs on the headstock's sides
+    ctx.fillStyle = opts.nutColor;
+    for (const f of [0.25, 0.5, 0.75]) {
+      for (const sign of [1, -1]) {
+        const cx = X_NUT + f * HEADSTOCK_LENGTH, cy = sign * 31;
+        const disc = [];
+        for (let j = 0; j < 16; j++) {
+          const x = cx + 5 * Math.cos(2 * Math.PI * j / 16), y = cy + 5 * Math.sin(2 * Math.PI * j / 16);
+          disc.push(project(x, y, zNeck(x, 0)));
         }
-      } else {
-        moveTo(x0, y0);
-        segment(x0, y0, x1, y1, 32);
+        polygon(disc); ctx.fill();
       }
-      ctx.stroke();
     }
+
+    // Frets and nut
+    ctx.strokeStyle = opts.fretColor;
+    ctx.lineWidth = 1.5 * px;
+    ctx.beginPath();
+    for (let n = 1; n <= NUM_FRETS; n++) {
+      const x = X_NUT - fretDistance(n), h = fretboardHalfWidth(x);
+      ctx.moveTo(...project(x, h, zNeck(x, h)));
+      ctx.lineTo(...project(x, -h, zNeck(x, -h)));
+    }
+    ctx.stroke();
+    ctx.strokeStyle = opts.nutColor;
+    ctx.lineWidth = 3 * px;
+    ctx.beginPath();
+    ctx.moveTo(...project(X_NUT, NUT_HALF_WIDTH, zNeck(X_NUT, 0)));
+    ctx.lineTo(...project(X_NUT, -NUT_HALF_WIDTH, zNeck(X_NUT, 0)));
+    ctx.stroke();
   }
 
-  // ---------- Animation loop ----------
-  // It only redraws while something moves (or after a change), so an idle guitar costs almost nothing.
+  // ---------- Animation loop: redraws only while something moves ----------
 
   let frameId = null;
   let last = performance.now();
 
   function animate() {
     frameId = requestAnimationFrame(animate);
-    const nowMs = performance.now();
-    const dt = Math.min((nowMs - last) / 1000, 0.1);
-    last = nowMs;
-    const now = nowMs / 1000;
-
-    let anyActive = updateWiggle(dt);
-    for (let i = 0; i < 6; i++) {
-      const st = strings[i];
-      if (!st.active) continue;
-      anyActive = true;
-      st.t = now - st.t0;
-      if (st.t < 0) continue;                                 // still waiting for its strum delay
-      const f1 = TUNING[i] / opts.slowdown;
-      modeAmplitudesAt(st.b, st.nModes, f1, opts.stiffness, opts.decayTime, opts.decaySlope, st.t, st.a);
-      // The fundamental decays slowest: once it is invisible, the string is at rest
-      if (Math.abs(st.b[1]) * Math.exp(-st.t / opts.decayTime) < 0.05) {
-        st.active = false;
-        dirty = true;                                         // one last redraw with the straight string
-      }
-    }
-
-    if (anyActive || dirty) {
+    const now = performance.now();
+    const dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    if (updateWiggle(dt) || dirty) {
       draw();
       dirty = false;
     }
   }
 
   function start() {
-    if (frameId !== null) return;      // already running
+    if (frameId !== null) return;
     last = performance.now();
     dirty = true;
     animate();
@@ -526,27 +419,26 @@ export function createGuitar(container, options = {}) {
   }
 
   resize();
+  state.target = cleanList(opts.wiggle);
   start();
 
   return {
     start,
     stop,
-    pluck,
-    strum,
-    wiggle,                            // wiggle() or wiggle('breathe, neck'): start (fades in)
-    stopWiggle,                        // fade out
-    snapWiggle,                        // snapWiggle(true / false): on / off at once
-    get wiggling() { return wiggleState.target === 1; },
-    // change options while it runs (slowdown, decayTime, ... apply from the next pluck on)
+    setWiggle,                         // setWiggle('edge') / setWiggle(['bend', 'neck']) / setWiggle('none'); (modes, true) = at once
+    get wiggle() { return [...state.target]; },
+    // change options while it runs
     set(newOpts) {
       Object.assign(opts, newOpts);
+      if ('wiggle' in newOpts) state.target = cleanList(opts.wiggle);
       resize();
+      fit = null;
       dirty = true;
       if (frameId === null) draw();
     },
     dispose() {
       stop();
       canvas.remove();
-    }
+    },
   };
 }

@@ -15,7 +15,9 @@
     ),
     $background-color: #050914,
 
-    // Text
+    // Text. League Gothic has no Greek letters: those (δ, ℓ, ν, ...) come from Fira Sans Extra Condensed,
+    // which has the same tall, narrow shape (theme/fonts: its Greek letters in weight 500, which matches League Gothic)
+    $heading-font: ('League Gothic', 'Fira Sans Extra Condensed', Impact, sans-serif),
     $main-color: #dce6f3,
     $heading-color: #f1f5ff,
 
@@ -30,8 +32,10 @@
 
 @use '../vendor/reveal/theme-template/theme';
 
-// Fonts: League Gothic ships with the repo; Lato comes from Google Fonts (falls back to sans-serif offline)
+// Fonts: League Gothic and Fira Sans Extra Condensed (Greek letters in titles) ship with the repo;
+// Lato comes from Google Fonts (falls back to sans-serif offline)
 @import url('fonts/league-gothic.css');
+@import url('fonts/fira-sans-extra-condensed.css');
 @import url('https://fonts.googleapis.com/css?family=Lato:400,700,400italic,700italic');
 
 @include mixins.light-bg-text-color(#222);
@@ -42,6 +46,7 @@
     --astro-accent-2: #50fa7b;     // second annotation color
     --astro-muted: #8ea3c0;        // captions, axis ticks
     --astro-caption-font: "STIX Two Text", "Latin Modern Roman", "Cambria", "Times New Roman", serif;
+    --astro-label-font: var(--r-heading-font);   // names under the stars (data-label on a stellar star)
 }
 
 // ---------- Starfield canvas (starfield.js) ----------
@@ -67,8 +72,10 @@
 // ---------- Plugin elements: block layout, centered ----------
 .reveal .star,
 .reveal .stellar,
+.reveal .stellar-quarter,
 .reveal .guitar,
 .reveal .pendulum,
+.reveal .pendulum-graph,
 .reveal .graph {
     display: block;
     position: relative;            // captions and hidden step markers are placed inside
@@ -78,6 +85,7 @@
 
 .reveal .star canvas,
 .reveal .stellar canvas,
+.reveal .stellar-quarter canvas,
 .reveal .guitar canvas,
 .reveal .pendulum canvas,
 .reveal .graph canvas {
@@ -86,6 +94,16 @@
 }
 
 // Caption under a pulsating star (data-label)
+// A star's box (data-radius): its square canvas (the star and its whole glow / pulsation), plus room
+// for the label below it. The label sits just under the canvas, on one line, centred.
+.reveal .star-box .star-caption {
+    bottom: auto;                  // the plugin sets top
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    white-space: nowrap;
+}
+
 .reveal .star-caption {
     position: absolute;
     left: 0;
@@ -101,6 +119,65 @@
     pointer-events: none;
 
     em { font-style: italic; }
+}
+
+// Names under the stellar stars: in the heading font, like the slide titles
+.reveal .star-caption.star-name {
+    font-family: var(--astro-label-font);
+    text-transform: var(--r-heading-text-transform);
+    letter-spacing: 0.04em;
+    font-size: 1em;
+}
+
+// Headings (and star names) are set in capitals; <span class="keep-case">δ</span> keeps a letter as
+// written, e.g. a small Greek delta that would otherwise become a capital Δ.
+.reveal .keep-case {
+    text-transform: none;
+}
+
+// A text block placed with data-x / data-y (textPlugin.js). As wide as its longest line (so moving it
+// never makes it wrap differently), at most the slide; data-width sets a fixed width.
+.reveal .slides .text {
+    width: max-content;
+    max-width: 100%;
+    z-index: 2;                    // above the objects it is placed over
+    text-align: center;
+
+    > :first-child { margin-top: 0; }      // so its centre is the text's centre
+    > :last-child { margin-bottom: 0; }
+}
+
+// A word that comes apart on a press (textPlugin.js):  <div class="text word-split" data-split-step>
+.reveal .slides .word-split {
+    .word-part {
+        position: relative;        // its note is placed below it
+        display: inline-block;
+    }
+    .word-dot {                    // the dots between the parts: no room at first, then they open up
+        display: inline-block;
+        width: 0;
+        opacity: 0;
+        text-align: center;
+        transition: width 0.9s ease-in-out, opacity 0.6s ease-in-out;
+    }
+    .word-note {                   // the notes below the parts
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        margin-top: 0.15em;
+        white-space: nowrap;
+        font-family: var(--r-main-font);
+        font-size: 0.32em;
+        font-weight: normal;
+        letter-spacing: normal;
+        text-transform: none;
+        color: var(--r-main-color);
+        opacity: 0;
+        transition: opacity 0.8s ease-in-out 0.5s;    // after the dots have opened
+    }
+    &.split .word-dot { width: 0.6em; opacity: 1; }
+    &.split .word-note { opacity: 1; }
 }
 
 // Graph annotations are written as child elements; the plugin draws them on the canvas
@@ -180,6 +257,12 @@
 
 .reveal .slides section .fragment.custom.draw-line.visible {
     stroke-dashoffset: 0;
+}
+
+// Props (propsPlugin.js): microphone, clapperboard, ... The svg as a block, so the box is exactly the drawing.
+.reveal .slides .prop {
+    z-index: 1;
+    svg { display: block; }
 }
 
 // Twinkling stars of a constellation: <circle class="twinkle" ...>

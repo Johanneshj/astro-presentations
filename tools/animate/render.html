@@ -1,0 +1,109 @@
+<!doctype html>
+<!--
+    Renders one object of the deck (a pulsating spherical harmonic, a star, or the acoustic rays) on a
+    transparent page, frame by frame, for tools/make_animation.py. The page runs on a virtual clock:
+    nothing moves until the script calls frame(ms), so every frame is exact and the loops close.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<script>
+  // ---- virtual clock: performance.now / Date.now / requestAnimationFrame only move on frame() ----
+  (() => {
+    let now = 0, nextId = 1;
+    let queue = new Map();
+    performance.now = () => now;
+    Date.now = () => now;
+    window.requestAnimationFrame = cb => { const id = nextId++; queue.set(id, cb); return id; };
+    window.cancelAnimationFrame = id => { queue.delete(id); };
+    window.__advance = ms => {
+      now += ms;
+      const due = queue;
+      queue = new Map();
+      for (const cb of due.values()) cb(now);
+    };
+  })();
+</script>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<style>
+  html, body { margin: 0; background: transparent; }
+  #stage { position: absolute; left: 0; top: 0; }
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<script type="module">
+  import { createStar } from '../../plugins/sphericalHarmonics.js';
+  import { createStellar } from '../../plugins/stellar.js';
+  import { createRayPainter, DISC } from '../../plugins/lib/rays.js';
+
+  const stage = document.getElementById('stage');
+  let canvas = null;          // the canvas a frame is read from
+  let paint = null;           // for 'rays': draws the disc and the rays into canvas
+  let handle = null;          // the current object (disposed before the next one: WebGL contexts are few)
+
+  // kind: 'harmonic' | 'star' | 'rays'; size: the picture's width and height in pixels
+  window.makeObject = (kind, size, opts) => {
+    handle?.dispose?.();
+    handle = null;
+    stage.replaceChildren();
+    const box = document.createElement('div');
+    stage.appendChild(box);
+    paint = null;
+    if (kind === 'harmonic') {
+      handle = createStar(box, { width: size, height: size, renderScale: 1, ...opts });
+      canvas = box.querySelector('canvas');
+    } else if (kind === 'star') {
+      handle = createStellar(box, { width: size, height: size, renderScale: 1, ...opts });
+      canvas = box.querySelector('canvas');
+    } else if (kind === 'rays') {
+      // the rays on their own: a cross-section of the star (a disc) with the rays travelling inside
+      const { discColor = '#f3e7d3', edgeColor = '#00000055', ...rayOpts } = opts;
+      const rays = createRayPainter(rayOpts);
+      rays.setSize(size);
+      canvas = document.createElement('canvas');
+      canvas.width = canvas.height = size;
+      box.appendChild(canvas);
+      const ctx = canvas.getContext('2d');
+      let clock = 0;
+      paint = dt => {
+        clock += dt;
+        rays.draw(clock);
+        ctx.clearRect(0, 0, size, size);
+        ctx.beginPath();
+        ctx.arc(size / 2, size / 2, size / 2 * DISC, 0, 2 * Math.PI);
+        ctx.fillStyle = discColor;
+        ctx.fill();
+        ctx.lineWidth = Math.max(1, size / 300);
+        ctx.strokeStyle = edgeColor;
+        ctx.stroke();
+        ctx.drawImage(rays.canvas, 0, 0);
+      };
+      paint(0);
+    } else throw new Error(`unknown kind "${kind}"`);
+    return [canvas.width, canvas.height];
+  };
+
+  // Move the clock on by ms (in steps of at most 50 ms, as the animations cap their time step at 0.1 s)
+  window.advance = ms => {
+    if (ms <= 0) { window.__advance(0); paint?.(0); return; }   // a fresh frame, no time passing
+    while (ms > 0) {
+      const step = Math.min(50, ms);
+      window.__advance(step);
+      paint?.(step / 1000);
+      ms -= step;
+    }
+  };
+
+  // One frame: move on by ms, then read the picture (in the same task, so WebGL's buffer is still there)
+  window.frame = ms => {
+    window.advance(ms);
+    return canvas.toDataURL('image/png');
+  };
+
+  window.rendererReady = true;
+</script>
+</body>
+</html>

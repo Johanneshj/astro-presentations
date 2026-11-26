@@ -19,7 +19,7 @@ put `data-sound` on the `<section>` itself.
 | `data-sound-start` | `0` | Start this many seconds into the file. |
 
 To play something together with another step, give both the same `data-fragment-index`
-(e.g. the guitar's `data-strum-step="0"` and the sound's `data-fragment-index="0"`).
+(e.g. a guitar step `<span class="fragment" data-wiggle="edge" data-fragment-index="0">` and the sound's `data-fragment-index="0"`).
 
 For a sound that goes with a graph's trace, use `data-audio` on the graph instead (see graph.md):
 then the curve is drawn in step with the sound.

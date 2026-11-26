@@ -38,14 +38,42 @@ function cached(key, make) {
  *   columns   "0,1" (indices) or "time,flux" (header names): which columns are time and value
  *   timeUnit  unit of the time column: 's' | 'min' | 'h' | 'd'   (default 'd', as in most light curves)
  *   timeZero  'first' (default: the series starts at t = 0) | a number in timeUnit | 'none'
+ *   cadence   seconds between rows, for files with only a value column (time = row number x cadence);
+ *             with a cadence the value is taken from the first column (or the column named in columns)
+ *   missing   a value that means "no data" (e.g. 0 for gaps filled with zeros); such rows are left out
  * Audio files are decoded to their waveform (time in seconds from the start, channels averaged).
  */
 export function loadSeries(src, options = {}) {
-  const { columns = '0,1', timeUnit = 'd', timeZero = 'first' } = options;
-  const key = isAudioFile(src) ? `audio|${src}` : `text|${src}|${columns}|${timeUnit}|${timeZero}`;
-  return cached(key, () => isAudioFile(src)
-    ? loadAudio(src)
-    : loadText(src, columns, timeUnit, timeZero));
+  const { columns = '0,1', timeUnit = 'd', timeZero = 'first', cadence = null, missing = null } = options;
+  const key = isAudioFile(src) ? `audio|${src}`
+    : `text|${src}|${columns}|${timeUnit}|${timeZero}|${cadence}|${missing}`;
+  return cached(key, () => isAudioFile(src) ? loadAudio(src)
+    : cadence ? loadValues(src, columns, Number(cadence), missing)
+    : loadText(src, columns, timeUnit, timeZero, missing));
+}
+
+/** One value per row, evenly spaced in time (row i is at t = i x cadence seconds). Written for speed:
+ *  files like this can have millions of rows. */
+async function loadValues(src, columns, cadence, missing) {
+  if (!(cadence > 0)) throw new Error(`${src}: cadence must be a positive number of seconds`);
+  const text = await (await fetchOrThrow(src)).text();
+  const one = String(columns).trim();                      // data-columns="2": the value is in column 2
+  const col = /^\d+$/.test(one) ? Number(one) : 0;
+  const skip = missing === null || missing === '' ? NaN : Number(missing);
+  const t = new Float64Array(text.length / 2 | 0), y = new Float64Array(text.length / 2 | 0);
+  let n = 0, row = 0, start = 0;
+  while (start < text.length) {
+    let end = text.indexOf('\n', start);
+    if (end < 0) end = text.length;
+    const line = text.slice(start, end).trim();
+    start = end + 1;
+    if (!line || line[0] === '#' || line[0] === '%' || line.startsWith('//')) continue;
+    const v = col === 0 ? parseFloat(line) : Number(line.split(/[\s,;]+/)[col]);
+    if (Number.isFinite(v) && v !== skip) { t[n] = row * cadence; y[n] = v; n++; }
+    row++;                                                  // a missing row still takes up its time
+  }
+  if (n < 2) throw new Error(`${src}: found fewer than 2 data rows`);
+  return { t: t.slice(0, n), y: y.slice(0, n), uniform: n === row };
 }
 
 async function fetchOrThrow(src) {
@@ -74,7 +102,7 @@ async function loadAudio(src) {
   return { t, y, uniform: true, duration: audio.duration };
 }
 
-async function loadText(src, columns, timeUnit, timeZero) {
+async function loadText(src, columns, timeUnit, timeZero, missing) {
   const text = await (await fetchOrThrow(src)).text();
   const unit = TIME_UNITS[timeUnit];
   if (!unit) throw new Error(`unknown time unit "${timeUnit}" (use ${Object.keys(TIME_UNITS).join(', ')})`);
@@ -103,7 +131,11 @@ async function loadText(src, columns, timeUnit, timeZero) {
       });
     }
     const tv = nums[ci[0]], yv = nums[ci[1]];
-    if (Number.isFinite(tv) && Number.isFinite(yv)) {       // rows with NaN (gaps, flagged points) are skipped
+    if (ci.length < 2 || yv === undefined) {
+      throw new Error(`${src}: only one column - give the time between rows with data-cadence (in seconds)`);
+    }
+    if (Number.isFinite(tv) && Number.isFinite(yv) && !(missing !== null && missing !== '' && yv === Number(missing))) {
+      // rows with NaN (gaps, flagged points) or the "missing" value are skipped
       ts.push(tv);
       ys.push(yv);
     }
@@ -204,7 +236,7 @@ export function fft(re, im) {
   }
 }
 
-const MAX_FFT = 1 << 22;
+const MAX_FFT = 1 << 22;      // ~4 million points (two 32 MB arrays); longer series get a coarser grid
 
 /**
  * Amplitude spectrum: a sine of amplitude A shows up as a peak of height A.
@@ -225,7 +257,7 @@ export function amplitudeSpectrum(series, { oversample = 4 } = {}) {
   steps.sort();
   let dt = steps[Math.floor(steps.length / 2)] || 1;
   let cells = Math.round((t[n - 1] - t[0]) / dt) + 1;
-  while (cells * 2 > MAX_FFT) {                            // very long series: coarser grid
+  while (cells > MAX_FFT) {                                // very long series: coarser grid
     dt *= 2;
     cells = Math.round((t[n - 1] - t[0]) / dt) + 1;
   }
@@ -260,8 +292,39 @@ function nextPow2(v) {
   return p;
 }
 
-/** Spectrum of a (loaded) source, cached under key. */
+/** Spectrum of a (loaded) source, cached under key. Computed in a background thread (a Web Worker),
+ *  so a long series does not freeze the slides while its FFT runs. */
 export function cachedSpectrum(key, seriesPromise, options) {
   return cached(`spectrum|${key}|${JSON.stringify(options)}`,
-    async () => amplitudeSpectrum(await seriesPromise, options));
+    async () => spectrumInWorker(await seriesPromise, options));
+}
+
+// The worker runs the same functions as above: their source is copied into it
+let worker = null;
+let jobs = 0;
+const pending = new Map();
+
+function spectrumInWorker(series, options) {
+  if (typeof Worker === 'undefined') return amplitudeSpectrum(series, options);
+  if (!worker) {
+    const source = `const MAX_FFT = ${MAX_FFT};\n${fft}\n${nextPow2}\n${amplitudeSpectrum}\n`
+      + 'onmessage = e => { const { id, t, y, options } = e.data;'
+      + ' const { f, a } = amplitudeSpectrum({ t, y }, options);'
+      + ' postMessage({ id, f, a }, [f.buffer, a.buffer]); };';
+    worker = new Worker(URL.createObjectURL(new Blob([source], { type: 'text/javascript' })));
+    worker.onmessage = e => {
+      const { id, f, a } = e.data;
+      pending.get(id)?.resolve({ f, a });
+      pending.delete(id);
+    };
+    worker.onerror = e => {                                 // e.g. out of memory: fail every waiting job
+      for (const job of pending.values()) job.reject(new Error(`spectrum failed: ${e.message}`));
+      pending.clear();
+    };
+  }
+  const id = ++jobs;
+  return new Promise((resolve, reject) => {
+    pending.set(id, { resolve, reject });
+    worker.postMessage({ id, t: series.t, y: series.y, options });   // copied; the series stays usable here
+  });
 }

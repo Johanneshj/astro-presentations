@@ -11,7 +11,8 @@
 //   child elements, e.g.
 //     <span class="fragment graph-arrow" data-from="0.5,1.1" data-to="2.5,1.1">T = 2 s</span>
 //     <span class="fragment graph-zoom"  data-x="0,6"></span>
-//   appear (or zoom) on their press. Children without class="fragment" are always shown.
+//   appear (or zoom) on their press. reveal does the fading, so any fragment style works
+//   (fade-up, fade-in-then-out, data-fragment-index, ...). Children without class="fragment" are always shown.
 //
 // Full attribute list with examples: docs/graph.md
 import { createGraph } from './graph.js';
@@ -20,7 +21,7 @@ import {
   TIME_UNITS, FREQ_UNITS, UNIT_LABELS,
 } from './timeseries.js';
 import {
-  bool, numberList, stringList, readOptions, makeTrigger, isShown, isPrinting, manageSlideItems, reserveSize,
+  bool, numberList, stringList, readOptions, makeTrigger, triggerFor, isShown, isPrinting, manageSlideItems, reserveSize,
 } from './lib/revealHelpers.js';
 
 const range = v => (v === 'auto' || v === '' ? null : numberList(v));
@@ -40,9 +41,12 @@ const ATTRIBUTES = {
   columns:      ['columns',      String],
   timeUnit:     ['timeUnit',     String],
   timeZero:     ['timeZero',     String],
+  cadence:      ['cadence',      Number],       // seconds between rows, for files with only values
+  missing:      ['missing',      Number],       // this value means "no data" (e.g. 0)
   // what to show
-  mode:         ['mode',         String],
+  mode:         ['mode',         String],       // 'time' | 'fourier' (compute the spectrum) | 'spectrum' (file is one)
   xUnit:        ['xUnit',        String],
+  freqUnit:     ['freqUnit',     String],       // data-mode="spectrum": unit of the file's frequency column
   yScale:       ['yScale',       Number],
   subtractMean: ['subtractMean', bool],
   oversample:   ['oversample',   Number],
@@ -52,10 +56,12 @@ const ATTRIBUTES = {
   audioVolume:  ['audioVolume',  Number],
   audioMax:     ['audioMax',     Number],       // stop the sound (and the trace) after this many seconds
   duration:     ['duration',     v => (isNaN(v) ? v : Number(v))],   // seconds | 'realtime'
+  loop:         ['loop',         bool],         // start the trace (and its sound) over when it ends
   speed:        ['speed',        Number],
   // createGraph options
   x:            ['xRange',       range],
   y:            ['yRange',       range],
+  window:       ['window',       Number],       // show this much x at once; it moves along with the trace
   xStep:        ['xStep',        Number],
   yStep:        ['yStep',        Number],
   yLog:         ['yLog',         bool],
@@ -64,6 +70,7 @@ const ATTRIBUTES = {
   style:        ['style',        String],
   color:        ['color',        String],
   lineWidth:    ['lineWidth',    Number],
+  smooth:       ['smooth',       bool],
   fill:         ['fill',         Number],
   pointColor:   ['pointColor',   String],
   pointRadius:  ['pointRadius',  Number],
@@ -89,7 +96,7 @@ const ATTRIBUTES = {
 
 // Options that belong to this plugin, not to createGraph
 const PLUGIN_ONLY = ['src', 'fn', 'fnRange', 'fnStep', 'A', 'T', 'noise', 'seed', 'columns', 'timeUnit',
-  'timeZero', 'mode', 'xUnit', 'yScale', 'subtractMean', 'oversample', 'audio', 'audioSync', 'audioVolume',
+  'timeZero', 'cadence', 'missing', 'mode', 'xUnit', 'freqUnit', 'yScale', 'subtractMean', 'oversample', 'audio', 'audioSync', 'audioVolume', 'loop',
   'audioMax', 'speed', 'duration'];
 
 // ---------- settings with defaults filled in ----------
@@ -97,18 +104,23 @@ const PLUGIN_ONLY = ['src', 'fn', 'fnRange', 'fnStep', 'A', 'T', 'noise', 'seed'
 function settings(el) {
   const o = readOptions(el, ATTRIBUTES);
   const fourier = o.mode === 'fourier';
+  const spectrum = o.mode === 'spectrum';              // a ready-made spectrum: columns frequency, amplitude
+  const freq = fourier || spectrum;                    // x axis is a frequency
   const fromAudio = o.src && isAudioFile(o.src);
-  const timeUnit = o.timeUnit ?? (o.src && !fromAudio ? 'd' : 's');
-  const xUnit = o.xUnit ?? (fourier ? (timeUnit === 's' ? 'Hz' : 'c/d') : timeUnit);
-  const units = fourier ? FREQ_UNITS : TIME_UNITS;
+  const timeUnit = o.timeUnit ?? (o.src && !fromAudio && !o.cadence ? 'd' : 's');
+  const freqUnit = o.freqUnit ?? 'c/d';
+  const xUnit = o.xUnit ?? (spectrum ? freqUnit : fourier ? (timeUnit === 's' ? 'Hz' : 'c/d') : timeUnit);
+  const units = freq ? FREQ_UNITS : TIME_UNITS;
   if (!(xUnit in units)) console.warn(`graph: unknown x unit "${xUnit}" (use ${Object.keys(units).join(', ')})`);
+  if (spectrum && !(freqUnit in FREQ_UNITS)) console.warn(`graph: unknown data-freq-unit "${freqUnit}"`);
   const unitText = UNIT_LABELS[xUnit] ?? xUnit;
 
   const graph = {
-    yFromZero: fourier,
-    xLabel: fourier ? `Frequency [${unitText}]` : `Time [${unitText}]`,
-    yLabel: fourier ? 'Amplitude' : 'Signal',
-    duration: fourier ? 3 : 4,
+    yFromZero: freq,
+    xLabel: freq ? `Frequency [${unitText}]` : `Time [${unitText}]`,
+    yLabel: freq ? 'Amplitude' : 'Signal',
+    duration: freq ? 2 : 4,
+    animate: freq ? 'grow' : 'trace',                 // spectra rise from 0; time series draw left to right
     ...Object.fromEntries(Object.entries(o).filter(([k]) => !PLUGIN_ONLY.includes(k))),
   };
 
@@ -118,8 +130,8 @@ function settings(el) {
   const audioSync = o.audioSync ?? (audio && audio === o.src && !fourier ? 'time' : 'progress');
 
   return {
-    ...o, fourier, fromAudio, timeUnit, xUnit, audio, audioSync, graph,
-    unitSeconds: fourier ? FREQ_UNITS[xUnit] : TIME_UNITS[xUnit],   // seconds per x unit (time) / Hz per x unit (fourier)
+    ...o, fourier, spectrum, freq, fromAudio, timeUnit, freqUnit, xUnit, audio, audioSync, graph,
+    unitSeconds: freq ? FREQ_UNITS[xUnit] : TIME_UNITS[xUnit],   // seconds per x unit (time) / Hz per x unit (fourier)
     subtractMean: o.subtractMean ?? false,
     yScale: o.yScale ?? 1,
   };
@@ -135,16 +147,27 @@ function seriesFor(s) {
     }));
   }
   if (!s.src) return Promise.reject(new Error('no data-src or data-fn given'));
-  return loadSeries(s.src, { columns: s.columns, timeUnit: s.timeUnit, timeZero: s.timeZero });
+  // A spectrum file: read the frequency column as it is (no unit change, no shift to 0)
+  if (s.spectrum) return loadSeries(s.src, { columns: s.columns, timeUnit: 's', timeZero: 'none', missing: s.missing });
+  return loadSeries(s.src, { columns: s.columns, timeUnit: s.timeUnit, timeZero: s.timeZero,
+                            cadence: s.cadence, missing: s.missing });
 }
 
 function sourceKey(s) {
   return s.fn ? `fn|${s.fn}|${s.fnRange}|${s.fnStep}|${s.A}|${s.T}|${s.noise}|${s.seed}`
-              : `src|${s.src}|${s.columns}|${s.timeUnit}|${s.timeZero}`;
+              : `src|${s.src}|${s.columns}|${s.timeUnit}|${s.timeZero}|${s.cadence}|${s.missing}`;
 }
 
 async function displayData(s, zoomMax) {
   const series = seriesFor(s);
+  if (s.spectrum) {
+    const { t: f, y: a } = await series;
+    const toX = FREQ_UNITS[s.freqUnit] / s.unitSeconds;
+    return {
+      x: Float64Array.from(f, v => v * toX),
+      y: Float64Array.from(a, v => v * s.yScale),
+    };
+  }
   if (!s.fourier) {
     const { t, y } = await series;
     let mean = 0;
@@ -174,10 +197,11 @@ function readAnnotation(child) {
   if (!type) return null;
   const d = child.dataset;
   const text = d.label ?? (child.textContent.trim() || undefined);
-  const a = { type, el: child, fragment: child.classList.contains('fragment'), visible: false };
+  const a = { type, el: child, fragment: child.classList.contains('fragment') };
   if (d.color) a.color = d.color;
   if (d.width) a.width = Number(d.width);
   if (d.size) a.size = Number(d.size);
+  if ('behind' in d) a.behind = d.behind !== 'false';   // drawn behind the data, not over it
 
   if (type === 'arrow') {
     Object.assign(a, { from: numberList(d.from), to: numberList(d.to), heads: d.heads, label: text });
@@ -229,22 +253,33 @@ export const GraphPlugin = {
     const states = new Map();                        // element -> state
     for (const el of deck.getRevealElement().querySelectorAll('.graph')) {
       const s = settings(el);
-      reserveSize(el, s.graph.width ?? 900, s.graph.height ?? 450);
+      reserveSize(el, s.graph.width ?? 900, s.graph.height ?? 450, deck);
       const annotations = [...el.children].map(readAnnotation).filter(Boolean);
-      for (const a of annotations) if (a.fragment) a.el.classList.add('custom');
+      // Zoom steps have nothing to show: "custom" keeps reveal from fading them. The other children
+      // are drawn by graph.js and faded by reveal (any fragment style works).
+      for (const a of annotations) if (a.fragment && a.type === 'zoom') a.el.classList.add('custom');
       const zoomMax = Math.max(s.graph.xRange?.[1] ?? -Infinity,
         ...annotations.filter(a => a.type === 'zoom' && a.view.x).map(a => a.view.x[1]));
       const state = {
         s, annotations,
         zoomMax: Number.isFinite(zoomMax) ? zoomMax : null,
         playStep: playTrigger(el),
+        soundStep: null,
         playing: false,                              // has the play step's trace been started?
+        sounding: false,                             // is the sound step's sound on?
+        run: 0,                                      // counts play() calls, to drop outdated ones
+        pending: false,                              // play() is waiting for the sound to load
+        timing: null,                                // the running trace's timing (see timing())
         audio: null,
         data: null,                                  // Promise of the display data
       };
+      // The sound step comes right after the play step (the trace first, its sound on the next press)
+      state.soundStep = triggerFor(el, 'soundStep', state.playStep ?? el.firstChild ?? el);
+      if (state.soundStep && !state.playStep) { state.soundStep.remove(); el.prepend(state.soundStep); }
       states.set(el, state);
-      for (const a of annotations) if (a.fragment) owner.set(a.el, state);
+      for (const a of annotations) if (a.fragment && a.type === 'zoom') owner.set(a.el, state);
       if (state.playStep) owner.set(state.playStep, state);
+      if (state.soundStep) owner.set(state.soundStep, state);
     }
 
     const load = state => (state.data ??= displayData(state.s, state.zoomMax));
@@ -266,83 +301,121 @@ export const GraphPlugin = {
       state.audio.currentTime = 0;
     }
 
-    // Start the trace (and the sound) over the current x window.
+    const loaded = audio => (audio.duration > 0 ? Promise.resolve()
+      : new Promise(r => audio.addEventListener('loadedmetadata', r, { once: true })));
+
+    // How a trace over the window win runs when it goes with the sound:
+    //   duration       seconds for the whole window
+    //   clock()        elapsed trace seconds, read from the sound
+    //   soundAt(p)     the sound's time when the trace is at p (0..1)
     //   sound of the source itself (audioSync 'time'): the tip of the curve follows the sound's time
     //   other sound (audioSync 'progress'): the trace takes as long as the sound (or data-duration)
-    //   no sound: data-duration seconds, or 'realtime' = as fast as the time axis itself
+    function timing(state, win, audio) {
+      const { s } = state;
+      if (s.audioSync === 'time') {
+        const t0 = win[0] * s.unitSeconds;
+        const duration = (win[1] - win[0]) * s.unitSeconds;
+        return { duration, clock: () => audio.currentTime - t0, soundAt: p => t0 + p * duration };
+      }
+      const duration = typeof s.duration === 'number' ? s.duration : Math.min(audio.duration, s.audioMax ?? Infinity);
+      return { duration, clock: () => audio.currentTime, soundAt: p => p * duration };
+    }
+
+    function startAudio(state, audio, at) {
+      const { s } = state;
+      const max = s.audioMax ?? Infinity;
+      audio.loop = !!s.loop && !Number.isFinite(max);
+      audio.currentTime = at;
+      audio.play().catch(err => console.warn('graph: could not play audio', err));
+      if (Number.isFinite(max) && !state.stopAt) {
+        state.stopAt = () => { if (audio.currentTime >= max) audio.pause(); };
+        audio.addEventListener('timeupdate', state.stopAt);
+      }
+    }
+
+    const soundWanted = state => !state.soundStep || isShown(state.soundStep);
+
+    // Start the trace over the current x window, with its sound unless a sound step is still to come.
+    // No sound: data-duration seconds, or 'realtime' = as fast as the time axis itself.
     async function play(state, g) {
       const { s } = state;
-      const win = g.targetWindow();
+      const loop = !!s.loop;
       const audio = getAudio(state);
+      const run = ++state.run;
 
       if (!audio) {
-        const duration = s.duration === 'realtime' && !s.fourier
+        const win = g.targetWindow();
+        const duration = s.duration === 'realtime' && !s.freq
           ? (win[1] - win[0]) * s.unitSeconds / (s.speed ?? 1)
           : (typeof s.duration === 'number' ? s.duration : s.graph.duration);
-        g.play({ duration });
+        g.play({ duration, loop });
         return;
       }
 
-      g.clear();
-      if (!(audio.duration > 0)) {
-        await new Promise(r => audio.addEventListener('loadedmetadata', r, { once: true }));
+      // Wait for the sound file when the trace starts with it, or when its length sets the duration.
+      // (A silent trace with data-duration starts at once; the sound joins it later.)
+      const needsLength = s.audioSync !== 'time' && typeof s.duration !== 'number';
+      if ((needsLength || soundWanted(state)) && !(audio.duration > 0)) {
+        g.clear();
+        state.pending = true;
+        await loaded(audio);
+        state.pending = false;
+        if (run !== state.run) return;               // went back or left while the sound was loading
       }
-      if (!state.playing && state.playStep) return;   // went back while the sound was loading
-      const max = s.audioMax ?? Infinity;
-      audio.currentTime = 0;
-      audio.play().catch(err => console.warn('graph: could not play audio', err));
-      if (Number.isFinite(max)) {
-        const stopAt = () => {
-          if (audio.currentTime >= max) { audio.pause(); audio.removeEventListener('timeupdate', stopAt); }
-        };
-        audio.addEventListener('timeupdate', stopAt);
-      }
+      state.timing = timing(state, g.targetWindow(), audio);
+      g.play({ duration: state.timing.duration, loop });
+      if (soundWanted(state)) joinSound(state, g, true);
+    }
 
-      if (s.audioSync === 'time') {
-        const t0 = win[0] * s.unitSeconds;
-        g.play({ duration: (win[1] - win[0]) * s.unitSeconds, clock: () => audio.currentTime - t0 });
-      } else {
-        const duration = typeof s.duration === 'number' ? s.duration : Math.min(audio.duration, max);
-        g.play({ duration, clock: () => audio.currentTime });
-      }
+    // The sound comes in where the running trace is, and the trace follows it from then on
+    async function joinSound(state, g, fromPlay = false) {
+      if (state.pending || !state.timing) return;    // play() joins it itself once it has loaded
+      const audio = getAudio(state);
+      if (!audio) return;
+      const run = state.run;
+      await loaded(audio);
+      if (run !== state.run || !state.sounding && state.soundStep) return;   // went back meanwhile
+      if (!g.tracing && !fromPlay) { play(state, g); return; }   // the trace has ended: start over, with the sound
+      startAudio(state, audio, state.timing.soundAt(g.tracing ? g.progress : 0));
+      g.setClock(state.timing.clock);
+    }
+
+    function leaveSound(state, g) {
+      stopAudio(state);
+      g.setClock(null);                              // the trace goes on, silently
     }
 
     // Bring a graph to the state that its shown fragments call for
     function apply(state, item, arriving) {
       const h = item.handle;
       if (!h || !h.hasData) return;
-      // reveal's own fragment styles work too: fade-out = shown until its press,
-      // fade-in-then-out = shown only until the next press
-      const shown = a => {
-        if (!a.fragment) return true;
-        const c = a.el.classList;
-        if (c.contains('fade-in-then-out')) return c.contains('current-fragment');
-        if (c.contains('fade-out')) return !isShown(a.el);
-        return isShown(a.el);
-      };
-
-      // Annotations
-      for (const a of state.annotations) a.visible = shown(a);
-      if (arriving) h.snapAnnotations(); else h.redraw();
+      // (Annotations need nothing here: reveal shows and hides them itself.)
 
       // Zoom: the last shown zoom step wins
       const zooms = state.annotations.filter(a => a.type === 'zoom' && a.fragment && isShown(a.el));
       const z = zooms.sort((p, q) => Number(p.el.dataset.fragmentIndex) - Number(q.el.dataset.fragmentIndex)).pop();
       h.setView(z ? z.view : null, arriving ? 0 : (z?.duration ?? state.s.graph.zoomDuration ?? 1.2));
 
-      // Trace
-      if (state.playStep) {
-        const want = isShown(state.playStep);
-        if (want && !state.playing) {
-          state.playing = true;
-          if (arriving) h.showAll(); else play(state, h);   // coming back to a slide: no replay
-        } else if (!want) {
-          state.playing = false;
-          stopAudio(state);
-          h.clear();
-        }
-      } else if (arriving) {
-        play(state, h);
+      // Trace (and sound)
+      if (!state.playStep && !state.soundStep) {
+        if (arriving) play(state, h);
+        return;
+      }
+      const want = !state.playStep || isShown(state.playStep);
+      const sound = want && soundWanted(state);
+      if (!want) {
+        state.playing = state.sounding = false;
+        state.run++;
+        stopAudio(state);
+        h.clear();
+      } else if (!state.playing) {
+        state.playing = true;
+        state.sounding = sound;
+        // coming back to a slide: show the finished curve, unless it loops or waits for its sound
+        if (arriving && !state.s.loop && !state.soundStep) h.showAll(); else play(state, h);
+      } else if (sound !== state.sounding) {
+        state.sounding = sound;
+        if (sound) joinSound(state, h); else leaveSound(state, h);
       }
     }
 
@@ -359,8 +432,6 @@ export const GraphPlugin = {
           if (item.handle !== g) return;             // disposed in the meantime
           g.setData(d);
           if (isPrinting(deck)) {
-            for (const a of state.annotations) a.visible = true;
-            g.snapAnnotations();
             g.showAll();
           } else if (item.shown) {
             apply(state, item, true);
@@ -373,11 +444,19 @@ export const GraphPlugin = {
       },
       onShow: item => {
         const state = states.get(item.el);
-        state.playing = false;
+        state.playing = state.sounding = false;
         apply(state, item, true);
       },
-      onHide: item => stopAudio(states.get(item.el)),
-      prepare: item => load(states.get(item.el)).catch(() => {}),
+      onHide: item => {
+        const state = states.get(item.el);
+        state.run++;                                 // a play() still loading its sound is dropped
+        stopAudio(state);
+      },
+      prepare: item => {
+        const state = states.get(item.el);
+        load(state).catch(() => {});
+        getAudio(state);                             // start loading the sound too
+      },
     });
 
     // A step was shown or hidden

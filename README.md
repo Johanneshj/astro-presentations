@@ -1,102 +1,120 @@
-# astro-presentation
+# 🌟 astro-presentations
 
-A reveal.js setup for astronomy outreach talks: a 3D starfield theme and animated slide elements —
-rotating stars that can be cut open, pulsating stars (spherical harmonics), animated graphs of light
-curves / sound files and their spectra, a guitar that wiggles and can be plucked, a pendulum, and sounds.
+**Animated stars for talks: pulsating stars, sound waves inside them, stars cut open, light curves
+you can hear, all in [reveal.js](https://revealjs.com) slides.**
 
-Everything is controlled from HTML attributes, and everything steps with reveal's **next** (space,
-right arrow, presenter clicker) and is undone by **back**.
+<p align="center">
+  <img src="gallery/harmonic_l3_m2.gif" width="200" alt="A pulsating star, l = 3, m = 2">
+  <img src="gallery/harmonic_rays_l6_m2.gif" width="200" alt="A pulsating star cut open, with its acoustic rays">
+  <img src="gallery/star_sun_open.gif" width="200" alt="The Sun cut open: radiative core and convective envelope">
+  <img src="gallery/star_red-giant_rays.gif" width="200" alt="A red giant with acoustic rays">
+</p>
 
-`index.html` is the template for *The stars sing* (a 15 minute public talk on asteroseismology).
-`starter.html` is an empty deck with all plugins loaded, for a new talk.
+Made for *The stars sing*, a 15-minute public talk on asteroseismology (`index.html`). Every object
+is a plain HTML tag with a few attributes, and every animation steps with your clicker:
+**next** makes it happen, **back** undoes it.
 
-## Quick start
+👉 **[See all the animations](gallery/README.md)**, or make your own GIFs with one command
+([below](#-make-gifs-for-anything-else)).
+
+---
+
+## 🚀 Quick start
 
 ```bash
+git clone https://github.com/Johanneshj/astro-presentations.git
+cd astro-presentations
 python3 tools/serve.py
 ```
 
-This opens `http://localhost:8000/index.html`. (A server is needed because browsers do not load
-JavaScript modules or data files from `file://` pages. Any static server works, e.g.
-`npx serve` or `python3 -m http.server`; `tools/serve.py` also turns off caching so a reload shows your latest edit.)
+Your browser opens the talk. Use `starter.html` to start a new talk with all plugins loaded.
 
-Keys: **S** speaker notes (with the script's lines), **F** fullscreen, **O** / **Esc** overview, **B** black screen.
-Add `?print-pdf` to the URL to print to PDF.
+| Key | |
+|---|---|
+| **→ / Space** | next step |
+| **S** | speaker view, with notes and the next slide |
+| **F** | full screen |
+| **D** / **Shift+D** | projector colours on / off, and fine-tune them |
+| **O** | overview of all slides |
 
-The folder is self-contained: copy or clone it anywhere and run the command above.
-Only three.js and the Lato font come from the internet — see *Offline*.
+## 🧩 Plugins
 
-## Plugins
+Put the tag on a slide and the plugin does the rest. Each one has its own page with every option.
 
-| Element | Plugin | Docs |
+| | Tag | What it is |
 |---|---|---|
-| `<div class="graph">` | Animated time series / spectrum from a table, an audio file or a formula; zoom, arrows, sound | [docs/graph.md](docs/graph.md) |
-| `<div class="stellar">` | Rotating glowing star, granulation, spots, cut-open interior | [docs/stellar.md](docs/stellar.md) |
-| `<div class="star">` | Pulsating star showing one spherical harmonic | [docs/pulsating-star.md](docs/pulsating-star.md) |
-| `<div class="guitar">` | Guitar with pluckable strings and cartoon body wiggle | [docs/guitar.md](docs/guitar.md) |
-| `<div class="pendulum">` | Pendulum with release step and measurement arrow | [docs/pendulum.md](docs/pendulum.md) |
-| `data-sound="file"` | Play a sound on a press | [docs/sound.md](docs/sound.md) |
-| theme | Starfield background, colors, layout classes (`row`, `column`, `corners`, …) | [docs/theme.md](docs/theme.md) |
+| 🌐 | [`<div class="star">`](docs/pulsating-star.md) | A star pulsating in one spherical harmonic (ℓ, m). It can be cut open to show the sound rays inside. |
+| ⭐ | [`<div class="stellar">`](docs/stellar.md) | A rotating, glowing star with granulation, spots or a disk. Cut it open to show its zones, its core or its sound rays. |
+| 🍰 | [`<div class="stellar-quarter">`](docs/stellar.md) | A star with a quarter cut out, one piece of physics per quarter. |
+| 📈 | [`<div class="graph">`](docs/graph.md) | Light curves and spectra, traced live, with sound, zooms, arrows and labels. |
+| 🎸 | [`<div class="guitar">`](docs/guitar.md) | A guitar body showing its vibration modes. |
+| 〰️ | [`<div class="string">`](docs/string.md) | A standing wave on a string: pick the mode and the speed. |
+| 🕰️ | [`<div class="pendulum">`](docs/pendulum.md) | A pendulum you raise, release and measure. |
+| 📉 | [`<div class="pendulum-graph">`](docs/pendulum-graph.md) | The pendulum's swing, traced as a graph. |
+| 🔊 | [`data-sound`](docs/sound.md) | Play a sound on a click. |
+| 📝 | [`<div class="text">`](docs/text.md) | Text placed anywhere on a slide. |
+| 🎤 | [`<div class="microphone">`](docs/props.md) | Simple drawings: a microphone and a clapperboard. |
+| ↗️ | [`data-move-step`](docs/move.md) | Glide any object to a new place on a click. |
+| 📽️ | [`D` key](docs/projector.md) | Projector colours: keeps bright details visible on a weak projector. |
+| 🌌 | [theme](docs/theme.md) | The 3D starfield behind the slides, colours and layouts. |
 
-How to add your own: [docs/writing-plugins.md](docs/writing-plugins.md).
+For example, a dipole mode that starts pulsating on the next click:
 
-## Steps while presenting
-
-Two ways to make something happen on a press of "next":
-
-- **a child element with `class="fragment"`** — it appears on that press. For graphs these are
-  arrows, lines, bands, labels and zooms (`<span class="fragment graph-zoom" data-x="0,6"></span>`).
-- **a `data-...-step` attribute on an element** — the element does something on that press:
-  `data-cut-step` (star opens), `data-play-step` (graph traces, sound plays), `data-wiggle-step`
-  (guitar wiggles), `data-swing-step` / `data-arrow-step` (pendulum).
-
-Steps happen in document order; give a number (`data-cut-step="2"`, `data-fragment-index="2"`) to
-reorder or to make two things happen on the same press. Going back, or jumping to a slide, always
-lands in the right state.
-
-## Folder layout
-
-```
-index.html              the talk (template)
-starter.html            empty deck for a new talk
-plugins/                slide elements (…Plugin.js = reveal side, the rest = drawing / maths)
-  lib/revealHelpers.js  shared helpers: options from attributes, steps, lazy start/stop
-theme/                  astro.scss (source) → astro.css, starfield.js, fonts
-data/demo/              SYNTHETIC light curves so the template works — replace with real data
-media/                  sound files
-docs/                   one page per plugin
-tools/                  serve.py (local server), make_demo_data.py
-vendor/reveal/          reveal.js 6 (dist files + theme template), MIT licence
+```html
+<div class="star" data-l="1" data-m="0" data-radius="150" data-pulse-step></div>
 ```
 
-## Your own data
+Want your own plugin? See [docs/writing-plugins.md](docs/writing-plugins.md).
 
-A light curve is any text table with time and brightness columns:
+## 🎞️ Make GIFs for anything else
 
-```
-# comments are fine
-# time  flux
-1325.2934  1.00021
-1325.2948  0.99987
-```
-
-Point a graph at it: `<div class="graph" data-src="data/my-star.txt" data-time-unit="d">`.
-Columns by number or name: `data-columns="time,flux"`. Gaps and NaN rows are fine. For TESS / Kepler
-data, export the light curve to CSV first (e.g. with `lightkurve`: `lc.to_csv('my-star.csv')` and
-`data-columns="time,flux"`).
-
-## Offline (at the venue)
-
-three.js is loaded from a CDN (see the `importmap` in `index.html`). To run without internet:
+`tools/make_animation.py` turns the same objects into **seamless loops** to use anywhere: other
+slides, papers, websites. Set it up once:
 
 ```bash
-npm install
-npm run vendor
+python3 -m venv .venv
+.venv/bin/pip install playwright pillow numpy
+.venv/bin/python -m playwright install chromium
 ```
 
-and change the import map to `"three": "./vendor/three/three.module.js"`.
-Without the Lato font the slides fall back to a system sans-serif.
+Then run it and answer a few questions (which object, ℓ, m, size, background, ...):
 
-## Licence
+```bash
+.venv/bin/python tools/make_animation.py
+```
 
-reveal.js is MIT licensed (`vendor/reveal/LICENSE`).
+or say it all at once:
+
+```bash
+.venv/bin/python tools/make_animation.py --kind harmonic --l 4 --m 2 --size 800 --out my_mode.gif
+```
+
+- **Objects:** `harmonic`, `harmonic-rays`, `rays`, `star`, `star-open`, `star-rays`
+- **Size:** `--size` in pixels, any resolution
+- **Background:** `transparent`, `black`, `white` or any colour
+- **Format:** `.gif`, `.webp`, `.png` (animated) or `.mp4`, from the file name
+
+All options: [docs/make-animation.md](docs/make-animation.md).
+
+## 📁 What's where
+
+```
+index.html        the talk "The stars sing"      starter.html   an empty deck
+plugins/          the animated objects            docs/          one page per plugin
+theme/            starfield and styles            gallery/       the GIFs
+data/             Kepler light curves, spectra    media/         sounds
+tools/            serve.py, make_animation.py     vendor/        reveal.js
+```
+
+**Your own data:** any text table of time and brightness works:
+`<div class="graph" data-src="data/my-star.txt">`. See [docs/graph.md](docs/graph.md).
+
+**No internet at the venue?** three.js comes from a CDN. Run `npm install && npm run vendor`
+and point the import map in `index.html` at `./vendor/three/three.module.js`.
+
+## 📜 Licence and credits
+
+MIT, see [LICENSE](LICENSE). Built on [reveal.js](https://revealjs.com) and
+[three.js](https://threejs.org) (both MIT). Fonts are under the SIL Open Font License
+(`theme/fonts`). The light curves are from NASA's Kepler mission, via the
+[MAST archive](https://archive.stsci.edu/).

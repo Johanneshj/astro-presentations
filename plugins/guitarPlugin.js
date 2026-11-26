@@ -3,15 +3,16 @@
 // Turns every <div class="guitar" data-...> into a guitar (see guitar.js).
 // Full attribute list: docs/guitar.md
 //
-//   data-strings="false"          a guitar without strings
-//   data-wiggle="breathe, bend"   which toy body modes it wiggles in (see WIGGLE_MODES in guitar.js)
-//   data-wiggle-step              it starts wiggling on the next press (otherwise: as soon as the slide shows,
-//                                 if data-wiggle is given)
-//   data-wiggle-stop-step         ... and calms down on a later press
-//   data-strum-step               all six strings are strummed on a press
+//   data-wiggle="edge"            wiggles in these modes as soon as the slide shows (see WIGGLE_MODES in guitar.js)
+//   child fragments set the wiggle on a press, e.g.
+//     <div class="guitar">
+//       <span class="fragment" data-wiggle="edge"></span>          1st press: waves around the edge
+//       <span class="fragment" data-wiggle="bend, neck"></span>    2nd press: it turns and the whole guitar moves
+//       <span class="fragment" data-wiggle="none"></span>          3rd press: calm down, turn back
+//     </div>
+//   The last shown step wins, so "back" undoes a step.
 import { createGuitar } from './guitar.js';
-import { bool, stringList, readOptions, triggerFor, isShown, manageSlideItems, reserveSize }
-  from './lib/revealHelpers.js';
+import { stringList, readOptions, isShown, manageSlideItems, reserveSize, placeOnSlide } from './lib/revealHelpers.js';
 
 const ATTRIBUTES = {
   width:          ['width',          Number],
@@ -21,47 +22,48 @@ const ATTRIBUTES = {
   neckColor:      ['neckColor',      String],
   headColor:      ['headColor',      String],
   holeColor:      ['holeColor',      String],
-  stringColor:    ['stringColor',    String],
-  holdColor:      ['holdColor',      String],
-  strings:        ['strings',        bool],
-  slowdown:       ['slowdown',       Number],
-  maxDisplayHz:   ['maxDisplayHz',   Number],
-  decayTime:      ['decayTime',      Number],
-  decaySlope:     ['decaySlope',     Number],
-  stiffness:      ['stiffness',      Number],
-  pluckHeight:    ['pluckHeight',    Number],
-  maxPull:        ['maxPull',        Number],
-  interactive:    ['interactive',    bool],
+  fretColor:      ['fretColor',      String],
+  nutColor:       ['nutColor',       String],
+  tilt:           ['tilt',           Number],
+  wiggleTilt:     ['wiggleTilt',     Number],
+  yaw:            ['yaw',            Number],
+  angle:          ['angle',          Number],
+  turnTime:       ['turnTime',       Number],
   wiggle:         ['wiggle',         stringList],
   wiggleAmount:   ['wiggleAmount',   Number],
   wiggleSpeed:    ['wiggleSpeed',    Number],
   wiggleRamp:     ['wiggleRamp',     Number],
-  wigglePatches:  ['wigglePatches',  bool],
-  wiggleColors:   ['wiggleColors',   stringList],
-  wiggleOpacity:  ['wiggleOpacity',  Number],
 };
+
+const stepsOf = el => [...el.querySelectorAll(':scope > [data-wiggle]')];
 
 export const GuitarPlugin = {
   id: 'guitar',
 
   init(deck) {
-    const steps = new Map();                         // element -> { wiggle, stop, strum }
+    const owner = new Map();                         // step element -> its guitar
     for (const el of deck.getRevealElement().querySelectorAll('.guitar')) {
       const o = readOptions(el, ATTRIBUTES);
-      reserveSize(el, o.width ?? 800, o.height ?? 373);
-      const wiggle = triggerFor(el, 'wiggleStep');
-      const stop = triggerFor(el, 'wiggleStopStep', wiggle ?? el);
-      const strum = triggerFor(el, 'strumStep', stop ?? wiggle ?? el);
-      steps.set(el, { wiggle, stop, strum, auto: 'wiggle' in el.dataset && !wiggle });
+      reserveSize(el, o.width ?? 800, o.height ?? 373, deck);
+      placeOnSlide(el, deck);                        // data-x / data-y
+      for (const step of stepsOf(el)) {
+        step.style.display = 'none';                 // a step is only a marker for reveal
+        owner.set(step, el);
+      }
     }
-    const owner = new Map();
-    for (const [el, s] of steps) for (const t of [s.wiggle, s.stop, s.strum]) if (t) owner.set(t, el);
 
-    // Wiggling right now? Only from which steps are shown, so back / jumps land right.
-    function wantWiggle(el) {
-      const s = steps.get(el);
-      const started = s.wiggle ? isShown(s.wiggle) : s.auto;
-      return started && !isShown(s.stop);
+    // The modes wanted right now: those of the shown step with the highest fragment index,
+    // else the guitar's own data-wiggle. Only from what is shown, so back / jumps land right.
+    function wantedModes(el) {
+      let modes = el.dataset.wiggle ?? '';
+      let best = -Infinity;
+      for (const step of stepsOf(el)) {
+        const isStep = step.classList.contains('fragment');
+        if (isStep && !isShown(step)) continue;
+        const index = isStep ? Number(step.dataset.fragmentIndex ?? 0) : -1;
+        if (index >= best) { best = index; modes = step.dataset.wiggle; }
+      }
+      return modes;
     }
 
     const items = manageSlideItems(deck, '.guitar', {
@@ -69,19 +71,15 @@ export const GuitarPlugin = {
         ...readOptions(item.el, ATTRIBUTES),
         renderScale: deck.getScale(),
       }),
-      onShow: item => item.handle.snapWiggle(wantWiggle(item.el)),
-      onPrint: item => item.handle.snapWiggle(false),
+      onShow: item => item.handle.setWiggle(wantedModes(item.el), true),
+      onPrint: item => item.handle.setWiggle('none', true),
     });
 
     function onFragments(e) {
       for (const f of e.fragments) {
         const el = owner.get(f);
         const item = el && items.find(i => i.el === el);
-        if (!item?.handle || !item.shown) continue;
-        const want = wantWiggle(el);
-        if (want && !item.handle.wiggling) item.handle.wiggle();
-        if (!want && item.handle.wiggling) item.handle.stopWiggle();
-        if (f === steps.get(el).strum && e.type === 'fragmentshown') item.handle.strum();
+        if (item?.handle && item.shown) item.handle.setWiggle(wantedModes(el));
       }
     }
     deck.on('fragmentshown', onFragments);

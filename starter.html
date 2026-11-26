@@ -28,8 +28,8 @@
     <section>
         <h2>One of each</h2>
         <div class="row">
-            <div class="stellar" data-size="240" data-texture="granulation" data-cut data-cut-step></div>
-            <div class="star" data-size="240" data-l="3" data-m="2" data-label data-label-offset="-12"></div>
+            <div class="stellar" data-radius="54" data-texture="granulation" data-cut data-cut-step></div>
+            <div class="star" data-radius="87" data-l="3" data-m="2" data-label></div>
             <div class="graph" data-width="520" data-height="260" data-fn="sin(2*PI*t)" data-t="0,4"
                 data-font-size="18" data-tick-font-size="13" data-play-step></div>
         </div>
@@ -48,14 +48,20 @@
     import { GraphPlugin }    from './plugins/graphPlugin.js';
     import { GuitarPlugin }   from './plugins/guitarPlugin.js';
     import { PendulumPlugin } from './plugins/pendulumPlugin.js';
+    import { PendulumGraphPlugin } from './plugins/pendulumGraph.js';
     import { SoundPlugin }    from './plugins/soundPlugin.js';
+    import { TextPlugin }     from './plugins/textPlugin.js';
+    import { PropsPlugin }    from './plugins/propsPlugin.js';
+    import { StringPlugin }   from './plugins/stringPlugin.js';
+    import { MovePlugin }     from './plugins/movePlugin.js';
+    import { ProjectorPlugin } from './plugins/projectorPlugin.js';
 
     Reveal.initialize({
         width: 1280,
         height: 720,
         hash: true,
         plugins: [RevealNotes, StarfieldPlugin, StellarPlugin, StarPlugin,
-                  GraphPlugin, GuitarPlugin, PendulumPlugin, SoundPlugin],
+                  GraphPlugin, GuitarPlugin, PendulumPlugin, PendulumGraphPlugin, SoundPlugin, TextPlugin, PropsPlugin, StringPlugin, MovePlugin, ProjectorPlugin],
     });
 </script>
 </body>

@@ -1,0 +1,10 @@
+/* Fira Sans Extra Condensed, weight 500, Greek letters only (League Gothic has none).
+   From Google Fonts; SIL Open Font License 1.1, see OFL-fira-sans.txt. */
+@font-face {
+    font-family: 'Fira Sans Extra Condensed';
+    src: url('./fira-sans-extra-condensed-500-greek.woff2') format('woff2');
+    font-weight: 500;
+    font-style: normal;
+    font-display: swap;
+    unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}

@@ -40,7 +40,8 @@ Options for formulas:
 
 | Attribute | Default | Meaning |
 |---|---|---|
-| `data-mode` | `time` | `time` = the series itself; `fourier` = its amplitude spectrum (a sine of amplitude A gives a peak of height A). |
+| `data-mode` | `time` | `time` = the series itself; `fourier` = its amplitude spectrum (a sine of amplitude A gives a peak of height A); `spectrum` = the file already is a spectrum (columns frequency, amplitude), drawn as it is. |
+| `data-freq-unit` | `c/d` | `data-mode="spectrum"`: unit of the file's frequency column (`Hz mHz uHz c/d c/h`). |
 | `data-x-unit` | the time unit / `Hz` or `c/d` | Unit of the x axis. Time: `s min h d`. Frequency: `Hz mHz uHz c/d c/h`. |
 | `data-y-scale` | `1` | Multiply the values (e.g. `1000` to go from relative flux to ppt). |
 | `data-subtract-mean` | `false` | Subtract the mean (time mode; spectra always do). |
@@ -54,6 +55,7 @@ with the gaps filled with zeros. That is fine for a picture, not for science.
 | Attribute | Default | Meaning |
 |---|---|---|
 | `data-x="a,b"` | all data | Visible x range (in `data-x-unit`). |
+| `data-window` | none | Show only this much x at a time (e.g. `10` = 10 days). The trace still runs over the whole x range (so a sound stays in sync), and the window moves along once the tip reaches its right edge; afterwards the last stretch stays. The y range stays that of the whole range. |
 | `data-y="c,d"` | fit | Visible y range. `auto` = fit the data inside the x window. |
 | `data-y-from-zero` | on for spectra | The automatic y range starts at 0. |
 | `data-y-log`, `data-y-log-decades` | off, `4` | Logarithmic y axis, showing this many decades below the maximum. |
@@ -72,7 +74,8 @@ with the gaps filled with zeros. That is fine for a picture, not for science.
 |---|---|---|
 | `data-style` | `line` | `line`, `points` or `both`. |
 | `data-color` | `#72d7e9` | |
-| `data-line-width` | `1.5` | |
+| `data-line-width` | `1.5` | Thickness of the data line (slide pixels; the traced, animated line too). |
+| `data-smooth` | on | Smooth curve through points that are more than a pixel apart. `data-smooth="false"` = straight lines between points. |
 | `data-fill` | `0` | Opacity of the area under the curve (nice for spectra, e.g. `0.25`). |
 | `data-point-color`, `data-point-radius` | color, `4` | |
 | `data-ball` | off | A glowing ball at the tip of the trace. |
@@ -82,10 +85,12 @@ with the gaps filled with zeros. That is fine for a picture, not for science.
 
 | Attribute | Default | Meaning |
 |---|---|---|
-| `data-animate` | `trace` | `trace` = draw from left to right; `none` = show at once. |
-| `data-duration` | `4` (`3` for spectra) | Seconds for the trace. `realtime` = as fast as the time axis (a 8 s window takes 8 s; with `data-speed`). |
+| `data-animate` | `trace` (`grow` for spectra) | `trace` = draw from left to right; `grow` = the whole curve rises from y = 0 to full height, like a histogram filling up; `none` = show at once. |
+| `data-duration` | `4` (`2` for spectra) | Seconds for the trace. `realtime` = as fast as the time axis (a 8 s window takes 8 s; with `data-speed`). |
 | `data-speed` | `1` | Speed factor for `realtime`. |
 | `data-play-step` | — | The trace starts on the next press instead of when the slide appears. A number places it like `data-fragment-index`. |
+| `data-sound-step` | — | With `data-audio`: the trace starts silently (on its play step), and the sound comes in on the next press, at the point the trace has reached; from then on the trace follows the sound. Back silences it again. |
+| `data-loop` | — | When the trace reaches the end it starts over (with `data-audio`, the sound loops too). |
 | `data-audio="file.mp3"` | — | Play this sound with the trace. The trace then lasts as long as the sound. |
 | `data-audio` (no value) | — | Play the source itself (when `data-src` is an audio file); the tip of the curve follows the sound exactly. |
 | `data-audio-max` | — | Stop the sound (and end the trace) after this many seconds — for long sonifications. |
@@ -97,9 +102,11 @@ Going back to a slide (from a later one) shows the finished trace without replay
 
 ## Annotations: child elements
 
-Put them inside the graph. With `class="fragment"` they appear on a press of "next" (and disappear on "back");
-without it they are always there. Coordinates are in the graph's own units. Text is either the element's
-content or `data-label`.
+Put them inside the graph. They are ordinary reveal fragments: with `class="fragment"` reveal fades them in on
+"next" and out on "back", using any fragment style you give them (`fade-in`, `fade-up`, `zoom-in`,
+`fade-in-then-out`, …) and `data-fragment-index`. Without `class="fragment"` they are always there. The graph
+only draws them (as SVG on top of the canvas) and keeps them attached to the data when it zooms.
+Coordinates are in the graph's own units. Text is either the element's content or `data-label`.
 
 ```html
 <div class="graph" data-fn="A*cos(2*PI*t/T)" data-t="0,8" data-y="-1.4,1.4">
@@ -119,11 +126,15 @@ content or `data-label`.
 | `graph-zoom` | `data-x="a,b"`, `data-y="c,d"` or `auto`, `data-x-step`, `data-y-step`, `data-duration` — zooms to that window on its press; back zooms out again |
 
 All of them take `data-color`, `data-width` (line width) and `data-size` (font size).
+`data-behind` puts one behind the data: the curve and its fill are drawn over it, so frequency lines
+do not hide the peaks they mark (`<span class="fragment graph-line" data-behind data-x="110,220">`).
 
-reveal's own fragment styles work for annotations too:
+Useful fragment styles:
 - `class="fragment fade-in-then-out graph-band"` — shown on its press, gone on the next (e.g. mark the region, then zoom in);
-- `class="fragment fade-out graph-…"` — shown until its press.
-- `data-fragment-index="2"` places it like any reveal fragment.
+- `class="fragment fade-out graph-…"` — shown until its press;
+- `data-fragment-index="2"` — places it like any reveal fragment (same number = same press).
+
+`graph-zoom` is the exception: it has nothing to show, so it is just a step.
 
 ## Labels
 
@@ -141,6 +152,18 @@ In axis labels and annotation texts: `*x*` is italic, `\nu` → ν, `\ell` → �
 <!-- its spectrum in µHz -->
 <div class="graph" data-mode="fourier" data-src="data/sun.txt" data-x-unit="uHz" data-x="0,8000"></div>
 
+<!-- a ready-made spectrum (e.g. lightkurve's periodogram, frequency per day) -->
+<div class="graph" data-mode="spectrum" data-src="data/PG_SPB_KIC10526294.txt" data-x="0,2" data-y-scale="100"
+    data-y-label="Amplitude [%]"></div>
+
+<!-- light curve synced to a sonification that spreads the whole file evenly over 60 s -->
+<div class="graph" data-src="data/LC_SPB_KIC10526294.txt" data-play-step
+    data-audio="media/LC_SPB_KIC10526294.mp3" data-duration="60" data-window="20"></div>
+
+<!-- 1st press: the trace runs silently and keeps starting over; 2nd press: its sound comes in, in sync -->
+<div class="graph" data-src="data/LC_SPB_KIC10526294.txt" data-play-step data-sound-step data-loop
+    data-audio="media/LC_SPB_KIC10526294.mp3" data-duration="60" data-window="20"></div>
+
 <!-- a recording, sound and trace together on "next" -->
 <div class="graph" data-src="media/a-string.mp3" data-audio data-play-step data-y="-1,1"></div>
 
@@ -157,4 +180,4 @@ g.setData({ x: Float64Array.from(...), y: Float64Array.from(...) });
 g.play({ duration: 3 });
 g.setView({ x: [0, 2], y: null });          // zoom (y null = fit)
 ```
-Handle: `start stop setData setMessage setView play clear showAll setAnnotations snapAnnotations redraw set dispose`.
+Handle: `start stop setData setMessage setView play clear showAll setAnnotations redraw set dispose`.

@@ -5,7 +5,7 @@
 //   - "trace" animation: the curve is drawn from left to right, optionally with a ball at its tip,
 //     optionally driven by an audio clock so the drawing follows the sound
 //   - animated zoom to another x / y window, with ticks that adapt
-//   - annotations (arrows, lines, bands, labels) that fade in and out
+//   - annotations (arrows, lines, bands, labels) as SVG on top; reveal fades them like any fragment
 //
 // It only knows about numbers in display units; graphPlugin.js loads the data, converts units and
 // connects everything to reveal's fragments. Options: see DEFAULTS below and docs/graph.md.
@@ -18,6 +18,8 @@ const DEFAULTS = {
   // ---- data window ----
   xRange: null,                  // [min, max] in display units; null = all the data
   yRange: null,                  // [min, max]; null = fit the data in the x window
+  window: null,                  // show only this much of x at once (e.g. 10 days); during the trace the
+                                 // window moves along with the tip. null = the whole x range
   yFromZero: false,              // automatic y range starts at 0 (spectra)
   yLog: false,                   // logarithmic y axis
   yLogDecades: 4,                // automatic log range: this many decades below the maximum
@@ -27,18 +29,19 @@ const DEFAULTS = {
   style: 'line',                 // 'line' | 'points' | 'both'
   color: '#72d7e9',
   lineWidth: 1.5,
-  fill: 0,                       // opacity of the area under the curve (0 = none)
+  smooth: true,                  // a smooth curve through the points (when they are further apart than a pixel)
+  fill: 0,                      // opacity of the area under the curve (0 = none)
   pointColor: null,              // null = same as color
   pointRadius: 4,
   ball: false,                   // ball at the tip of the trace
-  ballColor: '#ff5e5e',
+  ballColor: '#ff5e5e',          // same red as the pendulum's bob
   ballRadius: 9,
 
   // ---- animation ----
-  animate: 'trace',              // 'trace' = draw from left to right | 'none' = show at once
+  animate: 'trace',              // 'trace' = draw from left to right | 'grow' = everything rises from y = 0
+                                 // (like a histogram filling up) | 'none' = show at once
   duration: 4,                   // seconds for the trace (the plugin may set it from the audio)
   zoomDuration: 1.2,             // seconds for a zoom
-  fadeDuration: 0.5,             // seconds for annotations to fade in / out
 
   // ---- axes ----
   axisColor: '#ffffff',
@@ -70,6 +73,10 @@ export function createGraph(container, options = {}) {
   const canvas = document.createElement('canvas');
   canvas.style.width = opts.width + 'px';
   canvas.style.height = opts.height + 'px';
+  // stacking inside the graph: annotations with behind: true (z 0), the data (z 1), the others (z 2)
+  canvas.style.position = 'relative';
+  canvas.style.zIndex = '1';
+  container.style.isolation = 'isolate';
   container.prepend(canvas);
   const ctx = canvas.getContext('2d');
 
@@ -117,6 +124,18 @@ export function createGraph(container, options = {}) {
       X: x => L + (x - x0) / (x1 - x0) * W,
       Y: y => T + H - (fy(y) - y0) / (y1 - y0) * H,
     };
+  }
+
+  // Steps much longer than the typical one are gaps in the data; the line is not drawn across them
+  let gapStep = Infinity;
+  function typicalStep(x) {
+    const n = Math.min(x.length - 1, 2000);
+    if (n < 1) return Infinity;
+    const stride = Math.max(1, Math.floor((x.length - 1) / n));
+    const steps = [];
+    for (let i = 1; i < x.length; i += stride) steps.push(x[i] - x[i - 1]);
+    steps.sort((a, b) => a - b);
+    return steps[steps.length >> 1] || Infinity;
   }
 
   // First index with x[i] >= v (binary search)
@@ -172,6 +191,20 @@ export function createGraph(container, options = {}) {
     if (!target) return initialView();
     const x = target.x ?? opts.xRange ?? fullX();
     return { x, y: target.y ?? autoY(x), xStep: target.xStep ?? null, yStep: target.yStep ?? null };
+  }
+
+  /** The part of the view that is drawn: all of it, or a window of opts.window that follows the trace.
+   *  The y range stays that of the whole view, so the axis does not jump while the window moves. */
+  function windowView() {
+    const w = opts.window;
+    if (!w || !view || w >= view.x[1] - view.x[0]) return view;
+    const [a, b] = view.x;
+    let lo;
+    if (trace.state === 'empty') lo = a;                                  // waiting: the beginning
+    else if (trace.state === 'tracing' && opts.animate === 'trace') lo = trace.head - w;   // tip at the right edge
+    else lo = b - w;                                                      // finished: the last stretch
+    lo = Math.min(Math.max(lo, a), b - w);
+    return { ...view, x: [lo, lo + w] };
   }
 
   // ---------- ticks ----------
@@ -306,7 +339,14 @@ export function createGraph(container, options = {}) {
   function drawCurve(m) {
     const { L, T, W, H } = plotRect();
     const { x: X, y: Y } = data;
-    const xEnd = trace.state === 'tracing' ? Math.min(view.x[1], trace.head) : view.x[1];
+    const tracing = trace.state === 'tracing';
+    const growing = tracing && opts.animate === 'grow';
+    const xEnd = tracing && !growing ? Math.min(view.x[1], trace.head) : view.x[1];
+
+    // 'grow': every value is scaled from the baseline (0, or the bottom of a log axis) up to its height
+    const g = growing ? ease(trace.p) : 1;
+    const bottom = view.y[0] > 0 ? view.y[0] : 1e-300;
+    const grow = g >= 1 ? (v => v) : opts.yLog ? (v => bottom * Math.pow(Math.max(v, bottom) / bottom, g)) : (v => v * g);
     if (trace.state === 'empty') return;
 
     const i0 = Math.max(0, lowerBound(X, view.x[0]) - 1);
@@ -323,47 +363,113 @@ export function createGraph(container, options = {}) {
     const showPoints = opts.style !== 'line';
     const lastX = Math.min(xEnd, X[i1]);
 
-    // Line: per device-pixel column only the first, lowest, highest and last value are drawn
+    // Line and fill. The points are first gathered per pixel column (first, lowest, highest, last value).
+    // The columns are screen pixels (not slide pixels, which are 2-3 screen pixels on a big monitor) and
+    // they are fixed to the data, not to the screen: a scrolling window then keeps the same points in
+    // the same column from frame to frame, so the line does not shimmer as it moves.
+    //  - sparse data (fewer points than columns): one polyline through them, as usual
+    //  - dense data (spectra, long series): each column becomes one short vertical stroke covering its
+    //    range (joined to the previous column's last value). That looks the same as the zig-zag line but
+    //    has no joints to compute - a zig-zag of tens of thousands of points is very slow to draw.
     if (showLine || opts.fill > 0) {
-      ctx.beginPath();
-      let col = null, cx = 0, yFirst = 0, yMin = 0, yMax = 0, yLast = 0, started = false, firstPx = 0;
-      const flush = () => {
-        if (col === null) return;
-        if (!started) { ctx.moveTo(cx, yFirst); firstPx = cx; started = true; } else ctx.lineTo(cx, yFirst);
-        if (yMin !== yFirst || yMax !== yFirst) { ctx.lineTo(cx, yMin); ctx.lineTo(cx, yMax); }
-        ctx.lineTo(cx, yLast);
-      };
+      const cols = [];                                     // [x, first, top, bottom, last, startsAfterGap]
+      const colWidth = (view.x[1] - view.x[0]) / Math.max(1, W * ratio);   // data x per screen pixel
+      let col = null, cur = null, jump = false;
       for (let i = i0; i <= i1; i++) {
-        let xi = X[i], yi = Y[i];
-        if (i === i1 && xi > lastX) { yi = valueAt(lastX); xi = lastX; }   // stop exactly at the trace head
+        let xi = X[i], yi = grow(Y[i]);
+        if (i === i1 && xi > lastX) { yi = grow(valueAt(lastX)); xi = lastX; }   // stop exactly at the trace head
         const px = m.X(xi), py = m.Y(yi);
-        const c = Math.round(px * ratio);
-        if (c !== col) {
-          flush();
-          col = c; cx = px; yFirst = yMin = yMax = yLast = py;
+        const c = Math.floor(xi / colWidth);               // screen-pixel columns, fixed to the data
+        const gap = i > i0 && xi - X[i - 1] > gapStep;     // a gap in the data: lift the pen
+        if (gap) jump = true;
+        if (c !== col || gap) {
+          cur = [px, py, py, py, py, jump];
+          cols.push(cur);
+          col = c; jump = false;
         } else {
-          if (py < yMin) yMin = py;
-          if (py > yMax) yMax = py;
-          yLast = py;
+          if (py < cur[2]) cur[2] = py;
+          if (py > cur[3]) cur[3] = py;
+          cur[4] = py;
         }
       }
-      flush();
+      const dense = i1 - i0 > 3 * cols.length;             // more than 3 points per screen pixel
 
-      if (showLine) {
-        ctx.strokeStyle = opts.color;
-        ctx.lineWidth = opts.lineWidth;
-        ctx.lineJoin = 'round';
-        ctx.stroke();
-      }
-      if (opts.fill > 0) {
+      if (opts.fill > 0 && cols.length > 1) {              // area under the curve: a plain outline of the column tops
         const base = opts.yLog ? T + H : Math.min(T + H, Math.max(T, m.Y(0)));
-        ctx.lineTo(cx, base);
-        ctx.lineTo(firstPx, base);
+        ctx.beginPath();
+        ctx.moveTo(cols[0][0], base);
+        for (const c of cols) ctx.lineTo(c[0], dense ? c[2] : c[1]);
+        ctx.lineTo(cols[cols.length - 1][0], base);
         ctx.closePath();
         ctx.globalAlpha = opts.fill;
         ctx.fillStyle = opts.color;
         ctx.fill();
         ctx.globalAlpha = 1;
+      }
+
+      if (showLine && cols.length) {
+        ctx.beginPath();
+        if (dense) {
+          // Columns whose values stay within about a line width are smooth at this scale: one point each,
+          // joined into a line (a staircase of strokes would look jagged on slopes). Columns that span
+          // more (spikes, oscillations faster than a pixel) get a vertical stroke covering their range.
+          const thin = opts.lineWidth * 1.5;
+          let prev = null;                                 // [x, y] where the previous column ended
+          let joined = false;                              // is the pen at the end of a line?
+          for (const c of cols) {
+            const after = prev && !c[5];
+            if (c[3] - c[2] <= thin) {
+              const y = (c[2] + c[3]) / 2;
+              if (joined && after) ctx.lineTo(c[0], y);
+              else if (after) { ctx.moveTo(prev[0], prev[1]); ctx.lineTo(c[0], y); }
+              else ctx.moveTo(c[0], y);
+              prev = [c[0], y];
+              joined = true;
+            } else {
+              const from = after ? Math.min(c[2], prev[1]) : c[2];
+              const to = after ? Math.max(c[3], prev[1]) : c[3];
+              ctx.moveTo(c[0], from);
+              ctx.lineTo(c[0], to + 0.01);                 // + 0.01: never a zero-length stroke
+              prev = [c[0], c[4]];
+              joined = false;
+            }
+          }
+          ctx.lineCap = 'round';                           // round ends close the steps between columns
+          ctx.lineJoin = 'round';
+        } else if (opts.smooth && i1 - i0 < cols.length) {
+          // Points further apart than a pixel: a smooth curve through them (Catmull-Rom as Bezier pieces)
+          let run = [];
+          const flush = () => {
+            if (!run.length) return;
+            ctx.moveTo(run[0][0], run[0][1]);
+            for (let k = 0; k < run.length - 1; k++) {
+              const p0 = run[k - 1] ?? run[k], p1 = run[k], p2 = run[k + 1], p3 = run[k + 2] ?? p2;
+              ctx.bezierCurveTo(p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6,
+                                p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6, p2[0], p2[1]);
+            }
+            run = [];
+          };
+          for (const c of cols) {
+            if (c[5]) flush();
+            run.push([c[0], c[1]]);
+            if (c[4] !== c[1]) run.push([c[0], c[4]]);
+          }
+          flush();
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+        } else {
+          cols.forEach((c, k) => {
+            if (k === 0 || c[5]) ctx.moveTo(c[0], c[1]); else ctx.lineTo(c[0], c[1]);
+            if (c[2] !== c[1] || c[3] !== c[1]) { ctx.lineTo(c[0], c[2]); ctx.lineTo(c[0], c[3]); }
+            ctx.lineTo(c[0], c[4]);
+          });
+          ctx.lineCap = 'butt';
+          ctx.lineJoin = 'round';
+        }
+        ctx.strokeStyle = opts.color;
+        ctx.lineWidth = opts.lineWidth;
+        ctx.stroke();
+        ctx.lineCap = 'butt';
       }
     }
 
@@ -373,7 +479,7 @@ export function createGraph(container, options = {}) {
       for (let i = i0; i <= i1; i++) {
         if (X[i] < view.x[0] || X[i] > xEnd) continue;
         ctx.beginPath();
-        ctx.arc(m.X(X[i]), m.Y(Y[i]), opts.pointRadius, 0, 2 * Math.PI);
+        ctx.arc(m.X(X[i]), m.Y(grow(Y[i])), opts.pointRadius, 0, 2 * Math.PI);
         ctx.fill();
       }
     }
@@ -383,81 +489,115 @@ export function createGraph(container, options = {}) {
     if (opts.ball && trace.state !== 'empty' && xEnd >= view.x[0]) {
       const bx = Math.min(xEnd, X[X.length - 1]);
       ctx.beginPath();
-      ctx.arc(m.X(bx), m.Y(valueAt(bx)), opts.ballRadius, 0, 2 * Math.PI);
+      ctx.arc(m.X(bx), m.Y(grow(valueAt(bx))), opts.ballRadius, 0, 2 * Math.PI);
       ctx.fillStyle = opts.ballColor;
-      ctx.shadowColor = opts.ballColor;
-      ctx.shadowBlur = opts.ballRadius;
       ctx.fill();
-      ctx.shadowBlur = 0;
     }
   }
 
+  // ---------- annotations ----------
+  // Each annotation lives in its own element (the child element written in the HTML), which holds an
+  // SVG drawing of it on top of the canvas. Showing and hiding is left to reveal: a child with
+  // class="fragment" is faded by reveal like any other fragment. Here we only (re)draw the shapes
+  // whenever the view changes (zoom), so they stay attached to the data.
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  let annotationsKey = '';
+
+  function svgEl(name, attrs, parent) {
+    const el = document.createElementNS(SVGNS, name);
+    for (const [k, v] of Object.entries(attrs)) if (v !== undefined && v !== null) el.setAttribute(k, v);
+    parent.appendChild(el);
+    return el;
+  }
+
+  // Text with *italic* parts and \name symbols, as an SVG <text>
+  function svgText(parent, text, x, y, { size, color, anchor = 'middle', baseline = 'central', bold = true }) {
+    const t = svgEl('text', { x, y, fill: color, 'font-size': size, 'font-family': font(), 'text-anchor': anchor,
+      'dominant-baseline': baseline, 'font-weight': bold ? 'bold' : 'normal' }, parent);
+    replaceSymbols(text).split('*').forEach((part, i) => {
+      if (part) svgEl('tspan', { 'font-style': i % 2 ? 'italic' : 'normal' }, t).textContent = part;
+    });
+    return t;
+  }
+
+  function annotationHost(a) {
+    if (!a.el) {                                   // created from JavaScript: make an element for it
+      a.el = document.createElement('span');
+      container.appendChild(a.el);
+    }
+    if (!a.svg) {
+      a.el.replaceChildren();
+      a.el.style.cssText += 'position: absolute; left: 0; top: 0; width: 100%; height: 100%;'
+        + ' overflow: visible; pointer-events: none;';
+      a.el.style.zIndex = a.behind ? '0' : '2';     // behind: the data's line and fill are drawn over it
+      a.svg = document.createElementNS(SVGNS, 'svg');
+      a.svg.setAttribute('width', opts.width);
+      a.svg.setAttribute('height', opts.height);
+      a.svg.style.cssText = 'position: absolute; left: 0; top: 0; overflow: visible;';
+      a.el.appendChild(a.svg);
+    }
+    a.svg.replaceChildren();
+    return a.svg;
+  }
+
   function drawAnnotations(m) {
+    const key = `${view.x}|${view.y}|${annotations.length}`;
+    if (key === annotationsKey) return;            // nothing moved
+    annotationsKey = key;
     const { L, T, W, H } = plotRect();
+
     for (const a of annotations) {
-      if (a.alpha <= 0.001 || a.type === 'zoom') continue;
+      if (a.type === 'zoom') continue;
+      const g = annotationHost(a);
       const color = a.color ?? '#ffd166';
-      ctx.save();
-      ctx.globalAlpha = a.alpha;
-      ctx.strokeStyle = color;
-      ctx.fillStyle = color;
-      ctx.lineWidth = a.width ?? 3;
+      const width = a.width ?? 3;
       const size = a.size ?? opts.fontSize * 0.85;
+      const line = (x1, y1, x2, y2, extra = {}) =>
+        svgEl('line', { x1, y1, x2, y2, stroke: color, 'stroke-width': width, ...extra }, g);
 
       if (a.type === 'arrow') {
         const x1 = m.X(a.from[0]), y1 = m.Y(a.from[1]), x2 = m.X(a.to[0]), y2 = m.Y(a.to[1]);
-        const ang = Math.atan2(y2 - y1, x2 - x1);
-        const hs = (a.width ?? 3) * 4;
         const heads = a.heads ?? 'end';
-        const startHead = heads === 'both' || heads === 'start';
-        const endHead = heads === 'both' || heads === 'end';
-        ctx.beginPath();
-        ctx.moveTo(x1 + (startHead ? Math.cos(ang) * hs * 0.8 : 0), y1 + (startHead ? Math.sin(ang) * hs * 0.8 : 0));
-        ctx.lineTo(x2 - (endHead ? Math.cos(ang) * hs * 0.8 : 0), y2 - (endHead ? Math.sin(ang) * hs * 0.8 : 0));
-        ctx.stroke();
-        if (endHead) arrowHead(x2, y2, ang, hs, color);
-        if (startHead) arrowHead(x1, y1, ang + Math.PI, hs, color);
+        const id = `h${Math.random().toString(36).slice(2, 8)}`;
+        const mk = svgEl('marker', { id, viewBox: '0 0 10 10', refX: 8, refY: 5, markerWidth: 4, markerHeight: 4,
+          orient: 'auto-start-reverse' }, svgEl('defs', {}, g));
+        svgEl('path', { d: 'M 0 1 L 10 5 L 0 9 z', fill: color }, mk);
+        line(x1, y1, x2, y2, {
+          'marker-start': heads === 'both' || heads === 'start' ? `url(#${id})` : null,
+          'marker-end': heads === 'both' || heads === 'end' ? `url(#${id})` : null,
+        });
         if (a.label) {
           const off = a.labelOffset ?? [0, -1];             // in label heights, relative to the middle
-          drawText(a.label, (x1 + x2) / 2 + off[0] * size, (y1 + y2) / 2 + off[1] * size,
-            { size, color, bold: true, align: a.labelAlign ?? 'center' });
+          const anchor = { left: 'start', right: 'end' }[a.labelAlign] ?? 'middle';
+          svgText(g, a.label, (x1 + x2) / 2 + off[0] * size, (y1 + y2) / 2 + off[1] * size, { size, color, anchor });
         }
       } else if (a.type === 'line') {
-        ctx.setLineDash(a.dash ?? [8, 6]);
+        const dash = (a.dash ?? [8, 6]).join(' ') || null;
         (a.x ?? []).forEach((xv, i) => {
           if (xv < view.x[0] || xv > view.x[1]) return;
           const px = m.X(xv);
-          ctx.beginPath();
-          ctx.moveTo(px, T + H);
-          ctx.lineTo(px, T);
-          ctx.stroke();
-          const label = a.labels?.[i];
-          if (label) drawText(label, px, T - 4, { size, color, baseline: 'bottom', bold: true });
+          line(px, T + H, px, T, { 'stroke-dasharray': dash });
+          if (a.labels?.[i]) svgText(g, a.labels[i], px, T - 4, { size, color, baseline: 'auto' });
         });
         (a.y ?? []).forEach((yv, i) => {
           if (yv < view.y[0] || yv > view.y[1]) return;
           const py = m.Y(yv);
-          ctx.beginPath();
-          ctx.moveTo(L, py);
-          ctx.lineTo(L + W, py);
-          ctx.stroke();
-          const label = a.labels?.[i];
-          if (label) drawText(label, L + W - 4, py - 4, { size, color, align: 'right', baseline: 'bottom', bold: true });
+          line(L, py, L + W, py, { 'stroke-dasharray': dash });
+          if (a.labels?.[i]) svgText(g, a.labels[i], L + W - 4, py - 4, { size, color, anchor: 'end', baseline: 'auto' });
         });
       } else if (a.type === 'band') {
         const xa = Math.max(L, m.X(a.x[0])), xb = Math.min(L + W, m.X(a.x[1]));
         const ya = a.y ? m.Y(a.y[1]) : T, yb = a.y ? m.Y(a.y[0]) : T + H;
-        ctx.globalAlpha = a.alpha * (a.opacity ?? 0.18);
-        ctx.fillRect(xa, ya, xb - xa, yb - ya);
-        ctx.globalAlpha = a.alpha;
-        ctx.lineWidth = 1.5;
-        ctx.strokeRect(xa, ya, xb - xa, yb - ya);
-        if (a.label) drawText(a.label, (xa + xb) / 2, ya - 4, { size, color, baseline: 'bottom', bold: true });
+        if (xb > xa) {
+          svgEl('rect', { x: xa, y: ya, width: xb - xa, height: yb - ya, fill: color, 'fill-opacity': a.opacity ?? 0.18,
+            stroke: color, 'stroke-width': 1.5 }, g);
+          if (a.label) svgText(g, a.label, (xa + xb) / 2, ya - 4, { size, color, baseline: 'auto' });
+        }
       } else if (a.type === 'label') {
         const y = a.at[1] === 'top' ? T + size : a.at[1] === 'bottom' ? T + H - size : m.Y(a.at[1]);
-        drawText(a.text ?? a.label ?? '', m.X(a.at[0]), y, { size, color, align: a.align ?? 'center', bold: !!a.bold });
+        const anchor = { left: 'start', right: 'end' }[a.align] ?? 'middle';
+        svgText(g, a.text ?? a.label ?? '', m.X(a.at[0]), y, { size, color, anchor, bold: !!a.bold });
       }
-      ctx.restore();
     }
   }
 
@@ -469,12 +609,16 @@ export function createGraph(container, options = {}) {
     if (!data) {
       view = view ?? { x: opts.xRange ?? [0, 1], y: opts.yRange ?? [0, 1], xStep: opts.xStep, yStep: opts.yStep };
     }
+    // The drawing functions read `view`; with a moving window they draw just that window
+    const whole = view;
+    view = windowView();
     const m = mapper();
     drawAxes(m);
     if (data) {
       drawCurve(m);
       drawAnnotations(m);
     }
+    view = whole;
     if (message) {
       const { L, T, W, H } = plotRect();
       drawText(message.text, L + W / 2, T + H / 2, {
@@ -488,6 +632,22 @@ export function createGraph(container, options = {}) {
   let last = performance.now();
 
   const ease = p => p * p * (3 - 2 * p);
+
+  // An audio element's currentTime moves in uneven steps of tens of milliseconds. Fine for the tip of
+  // a trace, but a moving window would stutter. So a local clock runs smoothly with the frames and is
+  // pulled gently toward the audio's time; it jumps only when they are far apart (a seek, a slow start),
+  // and it stands still while the audio's time does (not started yet, paused, finished).
+  function smoothClock(now, dt) {
+    const c = trace.clock();
+    if (c !== trace.clockLast) { trace.clockLast = c; trace.clockChanged = now; }
+    const running = now - (trace.clockChanged ?? -Infinity) < 250;
+    if (trace.local === undefined || Math.abs(c - trace.local) > 0.3) trace.local = c;
+    else {
+      if (running) trace.local += dt;
+      trace.local += (c - trace.local) * Math.min(1, dt * 0.8);
+    }
+    return trace.local;
+  }
 
   function animate() {
     frameId = requestAnimationFrame(animate);
@@ -512,21 +672,14 @@ export function createGraph(container, options = {}) {
     }
 
     if (trace.state === 'tracing') {
-      const elapsed = trace.clock ? trace.clock() : (now - trace.t0) / 1000;
-      const p = Math.min(1, Math.max(0, elapsed / trace.duration));
+      const elapsed = trace.clock ? smoothClock(now, dt) : (now - trace.t0) / 1000;
+      let p = Math.max(0, elapsed / trace.duration);
+      if (trace.loop) p -= Math.floor(p);             // looping: start over at the left end
+      else p = Math.min(1, p);
+      trace.p = p;
       trace.head = trace.x0 + p * (trace.x1 - trace.x0);
       if (p >= 1) trace.state = 'full';
       moving = true;
-    }
-
-    for (const a of annotations) {
-      const target = a.visible ? 1 : 0;
-      if (a.alpha === undefined) a.alpha = target;
-      if (a.alpha !== target) {
-        const step = dt / Math.max(0.01, opts.fadeDuration);
-        a.alpha = target > a.alpha ? Math.min(1, a.alpha + step) : Math.max(0, a.alpha - step);
-        moving = true;
-      }
     }
 
     if (moving || dirty) {
@@ -539,7 +692,9 @@ export function createGraph(container, options = {}) {
     if (frameId !== null) return;
     last = performance.now();
     dirty = true;
-    animate();
+    // first frame on the next tick, not now: when a slide is shown again, the plugin resets the
+    // trace right after start(), and drawing now would flash the old, finished picture
+    frameId = requestAnimationFrame(animate);
   }
 
   function stop() {
@@ -559,6 +714,7 @@ export function createGraph(container, options = {}) {
     /** Hand over the data: { x, y } in display units, x increasing. */
     setData(d) {
       data = d;
+      gapStep = typicalStep(d.x) * 5;                      // more than 5 samples missing = a gap
       message = null;
       view = initialView();
       dirty = true;
@@ -589,14 +745,27 @@ export function createGraph(container, options = {}) {
 
     /** Start the trace over the current x window. duration in seconds; clock() (optional) returns the
      *  elapsed seconds, e.g. from an audio element, so the drawing follows the sound. */
-    play({ duration = opts.duration, clock = null } = {}) {
+    play({ duration = opts.duration, clock = null, loop = false } = {}) {
       const [x0, x1] = zoom ? zoom.to.x : view ? view.x : [0, 1];
       trace = {
-        state: opts.animate === 'trace' ? 'tracing' : 'full',
+        state: opts.animate === 'trace' || opts.animate === 'grow' ? 'tracing' : 'full',
+        p: 0,
         x0, x1, head: x0,
-        t0: performance.now(), duration: Math.max(0.01, duration), clock,
+        t0: performance.now(), duration: Math.max(0.01, duration), clock, loop,
       };
       dirty = true;
+    },
+
+    /** How far the trace has got (0..1). */
+    get progress() { return trace.state === 'empty' ? 0 : trace.p ?? 0; },
+
+    /** Let a running trace follow another clock from here on (null = its own timer), without a jump:
+     *  e.g. a sound that starts at the trace's current position. */
+    setClock(clock) {
+      if (trace.state !== 'tracing') return;
+      trace.clock = clock;
+      trace.local = trace.clockLast = trace.clockChanged = undefined;
+      trace.t0 = performance.now() - trace.p * trace.duration * 1000;
     },
 
     /** Nothing drawn until play() (for a trace that starts on a later "next"). */
@@ -610,9 +779,8 @@ export function createGraph(container, options = {}) {
     /** The x window shown now, or the one a running zoom is heading to. */
     targetWindow() { return zoom ? zoom.to.x : view ? view.x : [0, 1]; },
 
-    /** Annotations: [{ type: 'arrow' | 'line' | 'band' | 'label', visible, ... }] (see docs/graph.md). */
-    setAnnotations(list) { annotations = list; dirty = true; },
-    snapAnnotations() { for (const a of annotations) a.alpha = a.visible ? 1 : 0; dirty = true; },
+    /** Annotations: [{ type: 'arrow' | 'line' | 'band' | 'label', el, ... }] (see docs/graph.md). */
+    setAnnotations(list) { annotations = list; annotationsKey = ''; dirty = true; },
     redraw() { dirty = true; if (frameId === null) draw(); },
 
     /** Change options while it runs (not width / height). */

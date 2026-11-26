@@ -6,11 +6,13 @@ Serve the presentation locally and open it in the browser.
     python3 tools/serve.py --no-open  # don't open a browser window
 
 Why a server: browsers refuse to load JavaScript modules and data files from file:// pages.
-This one also tells the browser not to cache anything, so a reload always shows your latest edits.
+This one also tells the browser not to cache anything, so a reload always shows your latest edits,
+and it answers "Range" requests (parts of a file), which browsers need to jump to a point in a sound.
 """
 import functools
 import http.server
 import os
+import re
 import sys
 import webbrowser
 
@@ -23,7 +25,51 @@ class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store')
+        self.send_header('Accept-Ranges', 'bytes')
         super().end_headers()
+
+    # Range requests: "bytes=start-end" -> 206 with just that part of the file
+    def send_head(self):
+        self._left = None
+        m = re.fullmatch(r'bytes=(\d*)-(\d*)', (self.headers.get('Range') or '').strip())
+        path = self.translate_path(self.path)
+        if not m or not os.path.isfile(path):
+            return super().send_head()
+        try:
+            f = open(path, 'rb')
+        except OSError:
+            self.send_error(404)
+            return None
+        size = os.fstat(f.fileno()).st_size
+        a, b = m.groups()
+        if a == '':                                   # "bytes=-500": the last 500 bytes
+            start, end = max(0, size - int(b or 0)), size - 1
+        else:
+            start, end = int(a), min(int(b) if b else size - 1, size - 1)
+        if start > end:
+            f.close()
+            self.send_response(416)
+            self.send_header('Content-Range', f'bytes */{size}')
+            self.end_headers()
+            return None
+        self.send_response(206)
+        self.send_header('Content-Type', self.guess_type(path))
+        self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
+        self.send_header('Content-Length', str(end - start + 1))
+        self.end_headers()
+        f.seek(start)
+        self._left = end - start + 1
+        return f
+
+    def copyfile(self, source, outputfile):
+        if self._left is None:
+            return super().copyfile(source, outputfile)
+        while self._left > 0:
+            chunk = source.read(min(64 * 1024, self._left))
+            if not chunk:
+                break
+            outputfile.write(chunk)
+            self._left -= len(chunk)
 
     def log_message(self, fmt, *args):            # only log problems
         if len(args) > 1 and str(args[1]).startswith(('4', '5')):
