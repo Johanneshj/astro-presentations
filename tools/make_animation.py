@@ -313,6 +313,13 @@ def yes(question, default=True):
     return ask(question + ' (y/n)', 'y' if default else 'n', choices=['y', 'n', 'yes', 'no']).startswith('y')
 
 
+def color(text):
+    """A color the browser understands: a name or #rrggbb (checked, so a typo is asked again)."""
+    from PIL import ImageColor
+    ImageColor.getrgb(text)                          # raises ValueError if it isn't a color
+    return text
+
+
 def int_list(text):
     return [int(v) for v in text.replace(',', ' ').split()]
 
@@ -334,6 +341,11 @@ def interactive():
         if yes('Latitude / longitude grid?'):
             o['grid'] = True
             o['gridSpacing'] = ask('Grid spacing in degrees', 30, int)
+        print('\nColors: 1. red / white / blue (red = moving in, blue = moving out)   2. your own three')
+        if ask('Number', 1, int, ['1', '2']) == 2:
+            print('Any color name (red, gold, ...) or #rrggbb.')
+            o['colors'] = [ask('Moving in', '#ff1a1a', color), ask('Nodes (not moving)', '#ffffff', color),
+                           ask('Moving out', '#1a4dff', color)]
         if kind == 'harmonic-rays':
             rays = ask('Degrees l of the rays inside (empty = this mode)', '', str)
             if rays:

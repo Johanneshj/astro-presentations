@@ -37,6 +37,10 @@ MP4 output also needs [ffmpeg](https://ffmpeg.org).
 | `--out` | `<kind>.gif` | `.gif`, `.webp`, `.png` (animated PNG) or `.mp4`, picked from the file name |
 | `--options` | `{}` | Any other option of the plugin, as JSON, e.g. `'{"grid": true, "pulseAmplitude": 0.2}'` |
 
+**Harmonic colours:** red / white / blue by default (red = moving in, white = the nodes, blue =
+moving out). The questions let you pick your own three. On the command line:
+`--options '{"colors": ["purple", "white", "#2a9d8f"]}'` (moving in, nodes, moving out).
+
 The `--options` names are the plugin's own:
 - harmonics: see the JavaScript options in [pulsating-star.md](pulsating-star.md);
 - stars: see [stellar.md](stellar.md);
