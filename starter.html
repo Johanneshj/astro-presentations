@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>New talk</title>
+
+    <link rel="stylesheet" href="vendor/reveal/reset.css">
+    <link rel="stylesheet" href="vendor/reveal/reveal.css">
+    <link rel="stylesheet" href="theme/astro.css">
+
+    <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+    </script>
+</head>
+
+<!-- An empty deck with every plugin loaded. Copy this file to start a new talk; see README.md and docs/. -->
+
+<body>
+<div class="reveal">
+<div class="slides">
+
+    <section>
+        <h1>Title</h1>
+        <p class="caption">Name · Date</p>
+    </section>
+
+    <section>
+        <h2>One of each</h2>
+        <div class="row">
+            <div class="stellar" data-size="240" data-texture="granulation" data-cut data-cut-step></div>
+            <div class="star" data-size="240" data-l="3" data-m="2" data-label data-label-offset="-12"></div>
+            <div class="graph" data-width="520" data-height="260" data-fn="sin(2*PI*t)" data-t="0,4"
+                data-font-size="18" data-tick-font-size="13" data-play-step></div>
+        </div>
+    </section>
+
+</div>
+</div>
+
+<script src="vendor/reveal/reveal.js"></script>
+<script src="vendor/reveal/plugin/notes.js"></script>
+<script src="theme/starfield.js"></script>
+
+<script type="module">
+    import { StellarPlugin }  from './plugins/stellarPlugin.js';
+    import { StarPlugin }     from './plugins/pulsStarPlugin.js';
+    import { GraphPlugin }    from './plugins/graphPlugin.js';
+    import { GuitarPlugin }   from './plugins/guitarPlugin.js';
+    import { PendulumPlugin } from './plugins/pendulumPlugin.js';
+    import { SoundPlugin }    from './plugins/soundPlugin.js';
+
+    Reveal.initialize({
+        width: 1280,
+        height: 720,
+        hash: true,
+        plugins: [RevealNotes, StarfieldPlugin, StellarPlugin, StarPlugin,
+                  GraphPlugin, GuitarPlugin, PendulumPlugin, SoundPlugin],
+    });
+</script>
+</body>
+</html>

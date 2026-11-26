@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>The stars sing</title>
+
+    <link rel="stylesheet" href="vendor/reveal/reset.css">
+    <link rel="stylesheet" href="vendor/reveal/reveal.css">
+    <link rel="stylesheet" href="theme/astro.css">
+
+    <!-- three.js (used by the stars). For offline use, see "Offline" in README.md -->
+    <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+    </script>
+</head>
+
+<!--
+    THE STARS SING - template for a 15 minute public talk on asteroseismology.
+
+    How to tweak:
+      * Every animated element is a <div class="..."> whose data-attributes are its settings.
+        All attributes are listed in docs/ (one page per plugin).
+      * "next" (space / right arrow / clicker) steps through each slide, "back" undoes:
+          class="fragment"  on a child element = it appears on a press
+          data-...-step     on an element       = that element does something on a press
+      * Speaker notes (press S) hold the lines from the script.
+      * Data: data/demo/ holds SYNTHETIC light curves. Replace the data-src paths with your real
+        files when you have them (two columns: time in days, brightness).
+-->
+
+<body>
+<div class="reveal">
+<div class="slides">
+
+<!-- ===================================================================================== -->
+<!-- 1  THE NIGHT SKY AND THE STARS                                                         -->
+<!-- ===================================================================================== -->
+<section>
+
+    <!-- 1.0  Title -->
+    <section>
+        <h1>The stars sing</h1>
+        <p class="caption">Your name · Your institute · Date</p>
+        <aside class="notes">Welcome to my talk ...</aside>
+    </section>
+
+    <!-- 1.1  The Big Dipper: stars first, the lines on "next" -->
+    <section data-transition="zoom">
+        <svg viewBox="0 0 600 340" width="1000" height="567">
+            <g fill="#ffffff">
+                <circle class="twinkle" cx="10"  cy="220" r="4.0" />   <!-- Alkaid -->
+                <circle class="twinkle" cx="120" cy="160" r="4.5" />   <!-- Mizar -->
+                <circle class="twinkle" cx="240" cy="180" r="4.5" />   <!-- Alioth -->
+                <circle class="twinkle" cx="280" cy="290" r="3.2" />   <!-- Megrez -->
+                <circle class="twinkle" cx="460" cy="280" r="4.0" />   <!-- Phecda -->
+                <circle class="twinkle" cx="480" cy="160" r="4.2" />   <!-- Merak -->
+            </g>
+            <polyline class="fragment custom draw-line" pathLength="1"
+                points="10,220 120,160 240,180 280,290 460,280 480,160 240,180"
+                fill="none" stroke="#ffffff" stroke-width="1.2" stroke-opacity="0.8" />
+        </svg>
+        <aside class="notes">The night sky has always been a source of wonder and amazement ...</aside>
+    </section>
+
+    <!-- 1.2  The Sun: opens on "next" -->
+    <section>
+        <h2>The Sun</h2>
+        <div class="stellar" data-size="520" data-structure="sun" data-cut data-cut-step
+            data-color="#ffd27a" data-rotation-period="25"
+            data-texture="granulation" data-granulation="0.4" data-granulation-scale="40"></div>
+        <aside class="notes">The Sun is ... But the Sun is just one of many stars ...</aside>
+    </section>
+
+    <!-- 1.3  Four kinds of star in the corners; "next" opens all, "next" again closes them.
+              Sizes are for the eye, not to scale: tweak data-size (canvas) and data-radius (star in canvas). -->
+    <section data-stellar-open data-stellar-close>
+        <div class="corners">
+            <div>
+                <div class="stellar" data-size="300" data-radius="0.42" data-structure="massive" data-cut
+                    data-temperature="15000" data-rotation-period="8"></div>
+                <p class="caption">Massive blue star</p>
+            </div>
+            <div>
+                <div class="stellar" data-size="340" data-radius="0.47" data-structure="red-giant" data-cut
+                    data-temperature="3800" data-rotation-period="60" data-texture="granulation"
+                    data-granulation-scale="6"></div>
+                <p class="caption">Red giant</p>
+            </div>
+            <div>
+                <div class="stellar" data-size="200" data-radius="0.4" data-structure="sun" data-cut
+                    data-color="#ffd27a" data-rotation-period="25"></div>
+                <p class="caption">The Sun</p>
+            </div>
+            <div>
+                <div class="stellar" data-size="150" data-radius="0.32" data-structure="dwarf" data-cut
+                    data-temperature="1600" data-rotation-period="6" data-glow="0.3"></div>
+                <p class="caption">Brown dwarf</p>
+            </div>
+            <h2>Stars come in all<br>shapes and sizes</h2>
+        </div>
+        <aside class="notes">
+            Stars come in all shapes and sizes. Usually we only see their surfaces ...
+            how can we look inside? Asteroseismology.
+        </aside>
+    </section>
+
+</section>
+
+<!-- ===================================================================================== -->
+<!-- 2  SWINGING: THE PENDULUM                                                              -->
+<!-- ===================================================================================== -->
+<section>
+
+    <!-- 2.0  Held aside; "next" lets go; "next" shows the measurement arrow -->
+    <section>
+        <h2>What does it mean to s(w)ing?</h2>
+        <div class="pendulum" data-length="330" data-angle="30" data-period="2"
+            data-swing-step data-arrow-step></div>
+        <aside class="notes">Before we can understand how a star can sing, we must understand that most physical systems sing - or swing.</aside>
+    </section>
+
+    <!-- 2.1  The measured positions, traced by the ball; T and A on "next" -->
+    <section>
+        <h3>Imagine we measured ...</h3>
+        <div class="graph" data-width="1100" data-height="480"
+            data-fn="A*cos(2*PI*t/T)" data-amplitude="1" data-period="2"
+            data-t="0,8" data-dt="0.05" data-noise="0.02"
+            data-y="-1.4,1.4" data-x-step="1" data-y-step="0.5"
+            data-style="points" data-point-radius="4" data-color="#9aa7b8"
+            data-ball data-duration="realtime"
+            data-x-label="Time [s]" data-y-label="*x* [m]">
+            <span class="graph-line" data-y="0" data-color="rgba(255,255,255,0.25)" data-width="1.5"></span>
+            <span class="fragment graph-arrow" data-from="2,1.15" data-to="4,1.15" data-heads="both">Period *T* = 2 s</span>
+            <span class="fragment graph-arrow" data-from="6,0" data-to="6,1" data-color="#50fa7b"
+                data-label-offset="0.6,0" data-label-align="left">Amplitude *A* = 1 m</span>
+        </div>
+        <aside class="notes">Imagine we measured ... We could note some important properties: period and amplitude.</aside>
+    </section>
+
+    <!-- 2.2  The spectrum of the same data -->
+    <section>
+        <h3>How often, rather than how long</h3>
+        <div class="graph" data-width="1100" data-height="480" data-mode="fourier"
+            data-fn="A*cos(2*PI*t/T)" data-amplitude="1" data-period="2" data-t="0,100" data-dt="0.05"
+            data-x="0,2" data-x-step="0.25" data-fill="0.25" data-y-label="Amplitude [m]">
+            <span class="fragment graph-line" data-x="0.5" data-labels="*f* = 1/*T* = 0.5 Hz"></span>
+        </div>
+        <aside class="notes">Rather than asking how long, we ask how often: frequency. This one peak uniquely describes our system.</aside>
+    </section>
+
+</section>
+
+<!-- ===================================================================================== -->
+<!-- 3  SINGING: THE GUITAR                                                                 -->
+<!-- ===================================================================================== -->
+<section>
+
+    <!-- 3.0  A guitar without strings; "next" makes it wiggle -->
+    <section>
+        <h2>What else s(w)ings?</h2>
+        <div class="guitar" data-width="1000" data-height="466" data-strings="false"
+            data-wiggle="breathe, bend" data-wiggle-step></div>
+        <aside class="notes">Another physical system that actually sings and swings: instruments. For example, the guitar ...</aside>
+    </section>
+
+    <!-- 3.1  The A string: sound and waveform on "next"; then zoom in to see the wave itself -->
+    <section>
+        <h3>Plucking the A string</h3>
+        <div class="graph" data-width="1100" data-height="480"
+            data-src="media/a-string.mp3" data-audio data-play-step
+            data-y="-1,1" data-y-label="Air pressure" data-line-width="1">
+            <span class="fragment graph-zoom" data-x="0.8,0.85" data-y="auto"></span>
+        </div>
+        <aside class="notes">This is the time series of the plucking of an A string. It is more complicated than the pendulum's.</aside>
+    </section>
+
+    <!-- 3.2  Its spectrum: harmonics of 110 Hz (the A two octaves below the 440 Hz Kammerton) -->
+    <section>
+        <h3>The A string's spectrum</h3>
+        <div class="graph" data-width="1100" data-height="480" data-mode="fourier"
+            data-src="media/a-string.mp3" data-x="0,1200" data-fill="0.25">
+            <span class="fragment graph-line" data-x="110,220,330,440,550,660,770,880,990,1100"
+                data-labels="110,220,330,440,550,660,770,880,990,1100" data-size="16"></span>
+            <span class="fragment graph-line" data-x="440" data-dash="none" data-color="#50fa7b"
+                data-width="4"></span>
+            <span class="fragment graph-label" data-at="440,top" data-color="#50fa7b" data-align="left"
+                data-bold>&nbsp;&nbsp;Kammerton A = 440 Hz</span>
+        </div>
+        <aside class="notes">Even though the time series is complicated and we don't have perfect pitch, we can tell it is an A string: the peaks are harmonics of the Kammerton.</aside>
+    </section>
+
+    <!-- 3.3  G chord -->
+    <section>
+        <h3>A G chord</h3>
+        <div class="graph" data-width="1100" data-height="480"
+            data-src="media/g-chord.mp3" data-audio data-play-step
+            data-y="-1,1" data-y-label="Air pressure" data-line-width="1" data-color="#ffb86c">
+            <span class="fragment graph-zoom" data-x="0.8,0.85" data-y="auto"></span>
+        </div>
+        <aside class="notes">Now a whole chord ...</aside>
+    </section>
+
+    <!-- 3.4  G chord spectrum: one set of harmonics per string (G B D G B G) -->
+    <section>
+        <h3>The G chord's spectrum</h3>
+        <div class="graph" data-width="1100" data-height="480" data-mode="fourier"
+            data-src="media/g-chord.mp3" data-x="0,800" data-fill="0.25" data-color="#ffb86c">
+            <span class="fragment graph-line" data-x="98,123.5,146.8,196,246.9,392"
+                data-labels="G,B,D,G,B,G" data-size="18"></span>
+        </div>
+        <aside class="notes">Each string adds its own ladder of peaks.</aside>
+    </section>
+
+    <!-- 3.5  Overview: the guitar again, strings strummed on "next" with the chord -->
+    <section>
+        <h3>An instrument's sound tells us about the instrument</h3>
+        <div class="guitar" data-width="760" data-height="354" data-wiggle="breathe, cross, neck" data-strum-step="0"></div>
+        <span class="fragment" data-sound="media/g-chord.mp3" data-fragment-index="0"></span>
+        <div class="row">
+            <div class="graph" data-width="440" data-height="230" data-src="media/a-string.mp3"
+                data-x="0.8,0.83" data-y="auto" data-font-size="18" data-tick-font-size="13" data-ticks="false"
+                data-x-label="time" data-y-label="" data-line-width="1.5"></div>
+            <div class="graph" data-width="440" data-height="230" data-mode="fourier" data-src="media/a-string.mp3"
+                data-x="0,1200" data-font-size="18" data-tick-font-size="13" data-ticks="false"
+                data-x-label="frequency" data-y-label="" data-fill="0.3"></div>
+        </div>
+        <aside class="notes">Overview: vibration → time series → spectrum → what the instrument is.</aside>
+    </section>
+
+</section>
+
+<!-- ===================================================================================== -->
+<!-- 4  THE SUN SINGS                                                                       -->
+<!-- ===================================================================================== -->
+<section>
+
+    <!-- 4.0  Solar time series; "next" zooms to 6 hours.  DEMO DATA: replace data-src. -->
+    <section>
+        <h2>The Sun's brightness</h2>
+        <div class="graph" data-width="1100" data-height="470"
+            data-src="data/demo/sun.txt" data-time-unit="d" data-x-unit="h"
+            data-y-label="Brightness [ppm]" data-line-width="1" data-color="#ffd27a">
+            <span class="fragment fade-in-then-out graph-band" data-x="0,6" data-color="#ffd27a">6 hours</span>
+            <span class="fragment graph-zoom" data-x="0,6" data-x-step="1"></span>
+        </div>
+        <aside class="notes">Here is the time series of the Sun; the measurements are ...</aside>
+    </section>
+
+    <!-- 4.1  Its spectrum; "next" marks, "next" zooms to the 5-minute oscillations -->
+    <section>
+        <h2>A forest of peaks</h2>
+        <div class="graph" data-width="1100" data-height="470" data-mode="fourier"
+            data-src="data/demo/sun.txt" data-time-unit="d" data-x-unit="uHz"
+            data-x="0,8000" data-color="#ffd27a" data-y-label="Amplitude [ppm]">
+            <span class="fragment fade-in-then-out graph-band" data-x="2000,4300" data-color="#72d7e9">5-minute oscillations</span>
+            <span class="fragment graph-zoom" data-x="2000,4300"></span>
+        </div>
+        <aside class="notes">We see a forest of peaks ... around 3 mHz, a period of about 5 minutes.</aside>
+    </section>
+
+    <!-- 4.2  One high-degree spherical harmonic -->
+    <section>
+        <h2>Stars wiggle too</h2>
+        <div class="star" data-size="560" data-l="21" data-m="9" data-amp="0.05" data-rate="0.6" data-spin="0.1"
+            data-colors="#1a4dff,white,#ff1a1a" data-color-gamma="0.8"
+            data-grid data-grid-spacing="15" data-grid-opacity="0.1"></div>
+        <aside class="notes">It turns out stars also wiggle ...</aside>
+    </section>
+
+    <!-- 4.2.5  Four spherical harmonics -->
+    <section>
+        <h3>Each peak is one way to wiggle</h3>
+        <div class="row" style="gap: 10px">
+            <div class="star" data-size="280" data-l="1" data-m="0" data-amp="0.08" data-label data-label-offset="-12"></div>
+            <div class="star" data-size="280" data-l="2" data-m="1" data-amp="0.08" data-label data-label-offset="-12"></div>
+            <div class="star" data-size="280" data-l="3" data-m="3" data-amp="0.08" data-label data-label-offset="-12"></div>
+            <div class="star" data-size="280" data-l="6" data-m="2" data-amp="0.06" data-label data-label-offset="-12"></div>
+        </div>
+        <aside class="notes">Different patterns, different frequencies ...</aside>
+    </section>
+
+</section>
+
+<!-- ===================================================================================== -->
+<!-- 5  OTHER STARS SING DIFFERENT SONGS                                                    -->
+<!--    (5.0/5.1 SPB, 5.2/5.3 delta Scuti, 5.4/5.5 Cepheid: same layout, copy to add more)  -->
+<!-- ===================================================================================== -->
+<section>
+
+    <!-- 5.0  SPB star: light curve + star + its mode; "next" plays the sound with the trace.  DEMO DATA. -->
+    <section>
+        <h3>A slowly pulsating B star</h3>
+        <div class="row">
+            <div class="graph" data-width="760" data-height="420"
+                data-src="data/demo/spb.txt" data-x="0,20" data-play-step
+                data-audio="media/spb_with_effect.mp3"
+                data-y-label="Brightness [mmag]" data-color="#9ec5ff" data-line-width="1.5"></div>
+            <div class="column">
+                <div class="stellar" data-size="220" data-temperature="15000" data-rotation-period="8"></div>
+                <div class="star" data-size="220" data-l="2" data-m="2" data-amp="0.08" data-rate="0.3" data-label data-label-offset="-12"></div>
+            </div>
+        </div>
+        <aside class="notes">SPB stars pulse with periods of about a day ...</aside>
+    </section>
+
+    <section>
+        <h3>... and its spectrum</h3>
+        <div class="graph" data-width="1100" data-height="470" data-mode="fourier"
+            data-src="data/demo/spb.txt" data-x="0,3" data-color="#9ec5ff" data-fill="0.25"
+            data-y-label="Amplitude [mmag]"></div>
+    </section>
+
+    <!-- 5.2  delta Scuti star.  DEMO DATA. -->
+    <section>
+        <h3>A δ Scuti star</h3>
+        <div class="row">
+            <div class="graph" data-width="760" data-height="420"
+                data-src="data/demo/dsct.txt" data-x="0,1" data-play-step
+                data-audio="media/dscuti_with_effect.mp3" data-audio-max="30"
+                data-y-label="Brightness [mmag]" data-color="#f1fa8c" data-line-width="1.5"></div>
+            <div class="column">
+                <div class="stellar" data-size="220" data-temperature="7800" data-rotation-period="4"></div>
+                <div class="star" data-size="220" data-l="5" data-m="3" data-amp="0.06" data-rate="0.8" data-label data-label-offset="-12"></div>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h3>... and its spectrum</h3>
+        <div class="graph" data-width="1100" data-height="470" data-mode="fourier"
+            data-src="data/demo/dsct.txt" data-x="0,40" data-color="#f1fa8c" data-fill="0.25"
+            data-y-label="Amplitude [mmag]"></div>
+    </section>
+
+    <!-- 5.4  Cepheid.  DEMO DATA. -->
+    <section>
+        <h3>A Cepheid</h3>
+        <div class="row">
+            <div class="graph" data-width="760" data-height="420"
+                data-src="data/demo/cepheid.txt" data-x="0,30" data-play-step
+                data-audio="media/cepheid_with_effect.mp3" data-audio-max="30"
+                data-y-label="Brightness [mmag]" data-color="#ffb86c" data-line-width="1.5"></div>
+            <div class="column">
+                <div class="stellar" data-size="220" data-temperature="5800" data-rotation-period="30" data-radius="0.42"></div>
+                <div class="star" data-size="220" data-l="0" data-m="0" data-amp="0.12" data-rate="0.4" data-label data-label-offset="-12"></div>
+            </div>
+        </div>
+    </section>
+
+    <section>
+        <h3>... and its spectrum</h3>
+        <div class="graph" data-width="1100" data-height="470" data-mode="fourier"
+            data-src="data/demo/cepheid.txt" data-x="0,1.5" data-color="#ffb86c" data-fill="0.25"
+            data-y-label="Amplitude [mmag]">
+            <span class="fragment graph-line" data-x="0.1864,0.3727,0.5591,0.7454,0.9318"
+                data-labels="*f*,2*f*,3*f*,4*f*,5*f*" data-size="18"></span>
+        </div>
+    </section>
+
+</section>
+
+<!-- ===================================================================================== -->
+<!-- 6  MY RESEARCH                                                                         -->
+<!-- ===================================================================================== -->
+<section>
+    <section>
+        <h2>My research</h2>
+        <p class="todo">to do: your own slides</p>
+    </section>
+    <section>
+        <h2>Thank you!</h2>
+    </section>
+</section>
+
+</div>
+</div>
+
+<script src="vendor/reveal/reveal.js"></script>
+<script src="vendor/reveal/plugin/notes.js"></script>
+<script src="theme/starfield.js"></script>
+
+<script type="module">
+    import { StellarPlugin }  from './plugins/stellarPlugin.js';
+    import { StarPlugin }     from './plugins/pulsStarPlugin.js';
+    import { GraphPlugin }    from './plugins/graphPlugin.js';
+    import { GuitarPlugin }   from './plugins/guitarPlugin.js';
+    import { PendulumPlugin } from './plugins/pendulumPlugin.js';
+    import { SoundPlugin }    from './plugins/soundPlugin.js';
+
+    Reveal.initialize({
+        // ---- tweak here ----
+        width: 1280,             // slide size; everything is scaled to fit the screen
+        height: 720,
+        hash: true,              // the URL remembers the slide (reload = same slide)
+        transition: 'slide',
+        controls: true,
+        progress: true,
+        center: true,
+
+        plugins: [
+            RevealNotes,
+            StarfieldPlugin,
+            StellarPlugin,
+            StarPlugin,
+            GraphPlugin,
+            GuitarPlugin,
+            PendulumPlugin,
+            SoundPlugin,
+        ],
+    });
+</script>
+</body>
+</html>

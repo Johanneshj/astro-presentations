@@ -1,0 +1,198 @@
+/**
+ * Asteroseismology theme for reveal.js
+ *
+ * This file is the source; astro.css is generated from it. After editing, rebuild with
+ *   npx sass theme/astro.scss theme/astro.css --no-source-map
+ * (run from the repository folder; see docs/theme.md).
+ */
+
+@use '../vendor/reveal/theme-template/mixins' as mixins;
+
+@use '../vendor/reveal/theme-template/settings' with (
+    // Faint nebula glow; the stars themselves are drawn by starfield.js
+    $background: (
+        radial-gradient(ellipse at 78% 80%, rgba(36, 38, 88, 0.20) 0%, transparent 45%)
+    ),
+    $background-color: #050914,
+
+    // Text
+    $main-color: #dce6f3,
+    $heading-color: #f1f5ff,
+
+    // Links
+    $link-color: #72d7e9,
+    $selection-background-color: #245b7b,
+
+    // Heading shadows
+    $heading-text-shadow: 0 0 16px rgba(102, 164, 255, 0.18),
+    $heading1-text-shadow: 0 0 30px rgba(102, 164, 255, 0.22)
+);
+
+@use '../vendor/reveal/theme-template/theme';
+
+// Fonts: League Gothic ships with the repo; Lato comes from Google Fonts (falls back to sans-serif offline)
+@import url('fonts/league-gothic.css');
+@import url('https://fonts.googleapis.com/css?family=Lato:400,700,400italic,700italic');
+
+@include mixins.light-bg-text-color(#222);
+
+// ---------- Colors used by the plugins (change them here, everything follows) ----------
+:root {
+    --astro-accent: #ffd166;       // arrows, highlights
+    --astro-accent-2: #50fa7b;     // second annotation color
+    --astro-muted: #8ea3c0;        // captions, axis ticks
+    --astro-caption-font: "STIX Two Text", "Latin Modern Roman", "Cambria", "Times New Roman", serif;
+}
+
+// ---------- Starfield canvas (starfield.js) ----------
+.reveal,
+.reveal .slides,
+.reveal .slides section {
+    background: transparent !important;
+}
+
+.reveal > canvas.starfield {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+}
+
+.reveal .slides {
+    z-index: 1;
+}
+
+// ---------- Plugin elements: block layout, centered ----------
+.reveal .star,
+.reveal .stellar,
+.reveal .guitar,
+.reveal .pendulum,
+.reveal .graph {
+    display: block;
+    position: relative;            // captions and hidden step markers are placed inside
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.reveal .star canvas,
+.reveal .stellar canvas,
+.reveal .guitar canvas,
+.reveal .pendulum canvas,
+.reveal .graph canvas {
+    display: block;
+    margin: 0 auto;
+}
+
+// Caption under a pulsating star (data-label)
+.reveal .star-caption {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 16px;                  // default; data-label-offset overrides it per star
+    z-index: 1;                    // above the canvas
+    text-align: center;
+    font-family: var(--astro-caption-font);
+    font-size: 0.8em;
+    line-height: 1.2;
+    color: var(--r-main-color);
+    text-shadow: 0 0 8px rgba(5, 9, 20, 0.9);
+    pointer-events: none;
+
+    em { font-style: italic; }
+}
+
+// Graph annotations are written as child elements; the plugin draws them on the canvas
+.reveal .graph > :not(canvas) {
+    position: absolute;
+    width: 0;
+    height: 0;
+    overflow: hidden;
+}
+
+// ---------- Layout helpers for slides ----------
+
+// Items side by side:  <div class="row"> ... </div>   (change the spacing with style="gap: 10px")
+.reveal .row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 30px;
+
+    > * { margin-left: 0; margin-right: 0; }
+}
+
+// Small caption under an item:  <p class="caption">Sun</p>
+.reveal .caption {
+    margin: 0;
+    font-size: 0.55em;
+    color: var(--astro-muted);
+}
+
+// Four items in the four corners of the slide, anything after them in the middle:
+//   <div class="corners"> <div>top left</div> <div>top right</div> <div>bottom left</div>
+//                         <div>bottom right</div> <h2>centre</h2> </div>
+// The height is set with style="--corners-height: 660px" (default: nearly the whole slide).
+.reveal .corners {
+    position: relative;
+    width: 100%;
+    height: var(--corners-height, 680px);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+
+    > * { text-align: center; z-index: 1; }
+    > :nth-child(1) { grid-area: 1 / 1; justify-self: start; align-self: start; }
+    > :nth-child(2) { grid-area: 1 / 2; justify-self: end;   align-self: start; }
+    > :nth-child(3) { grid-area: 2 / 1; justify-self: start; align-self: end; }
+    > :nth-child(4) { grid-area: 2 / 2; justify-self: end;   align-self: end; }
+    > :nth-child(n + 5) { grid-area: 1 / 1 / 3 / 3; place-self: center; z-index: 0; }
+}
+
+// A column of items:  <div class="column"> ... </div>
+.reveal .column {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+
+    > * { margin-top: 0; margin-bottom: 0; }
+}
+
+// Placeholder box for things still to be made (remove when done)
+.reveal .todo {
+    display: inline-block;
+    padding: 0.4em 0.8em;
+    border: 2px dashed var(--astro-accent);
+    border-radius: 8px;
+    color: var(--astro-accent);
+    font-size: 0.6em;
+}
+
+// ---------- Constellations (lines drawn on "next") ----------
+// <polyline class="fragment custom draw-line" pathLength="1" ...>
+.reveal .slides section .fragment.custom.draw-line {
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
+    transition: stroke-dashoffset 2.5s ease-in-out;
+}
+
+.reveal .slides section .fragment.custom.draw-line.visible {
+    stroke-dashoffset: 0;
+}
+
+// Twinkling stars of a constellation: <circle class="twinkle" ...>
+.reveal .twinkle {
+    animation: astro-twinkle 3s ease-in-out infinite alternate;
+    transform-box: fill-box;
+    transform-origin: center;
+}
+
+.reveal .twinkle:nth-child(2n) { animation-duration: 4.1s; }
+.reveal .twinkle:nth-child(3n) { animation-duration: 2.3s; }
+
+@keyframes astro-twinkle {
+    from { opacity: 1; }
+    to   { opacity: 0.55; }
+}

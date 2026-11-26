@@ -1,0 +1,16 @@
+{
+  "name": "astro-presentation",
+  "version": "0.1.0",
+  "private": true,
+  "description": "reveal.js theme and animated plugins for astronomy outreach talks",
+  "scripts": {
+    "serve": "python3 tools/serve.py",
+    "theme": "sass theme/astro.scss theme/astro.css --no-source-map",
+    "vendor": "mkdir -p vendor/three && cp node_modules/three/build/three.module.js vendor/three/",
+    "demo-data": "python3 tools/make_demo_data.py"
+  },
+  "devDependencies": {
+    "sass": "^1.77.0",
+    "three": "0.160.0"
+  }
+}
